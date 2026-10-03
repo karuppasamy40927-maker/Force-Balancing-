@@ -5,7 +5,12 @@
 
 import React, { useState, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Calculator, ArrowRight, Settings2, Info, Compass, Plus, X, Sparkles, Loader2, RotateCcw, Download, FileSpreadsheet, Maximize2, Play, Pause, Eye, EyeOff, Copy, Check, AlertTriangle, Palette, HelpCircle, Trash2, Printer } from 'lucide-react';
+import { 
+  Calculator, ArrowRight, Settings2, Info, Compass, Plus, X, Sparkles, Loader2, RotateCcw, 
+  Download, FileSpreadsheet, Maximize2, Play, Pause, Eye, EyeOff, Copy, Check, AlertTriangle, 
+  Palette, HelpCircle, Trash2, Printer, Pin, Upload, ShieldCheck, Activity, Disc, ArrowDown, 
+  ChevronRight, Gauge, Layers, Scale, Ruler 
+} from 'lucide-react';
 
 const InfoTooltip = ({ text }: { text: string }) => (
   <div className="group relative inline-flex items-center ml-1 align-middle">
@@ -19,6 +24,7 @@ const InfoTooltip = ({ text }: { text: string }) => (
 import Markdown from 'react-markdown';
 import { generateBalancingReport } from './generateBalancingReport';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import UnitConversionHelpModal from './UnitConversionHelpModal';
 
 interface Mass {
   id: number;
@@ -29,6 +35,152 @@ interface Mass {
 }
 
 const defaultColors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'];
+
+export function parseCSVToMasses(csvText: string): Mass[] {
+  const lines = csvText
+    .split(/\r\n|\n|\r/)
+    .map(line => line.trim())
+    .filter(line => line.length > 0 && !line.startsWith('#'));
+
+  if (lines.length === 0) {
+    throw new Error('CSV file is empty or contains only comments.');
+  }
+
+  // Detect delimiter: evaluate commas, semicolons, tabs in first non-empty lines
+  const sampleLines = lines.slice(0, Math.min(5, lines.length)).join('\n');
+  const commaCount = (sampleLines.match(/,/g) || []).length;
+  const semiCount = (sampleLines.match(/;/g) || []).length;
+  const tabCount = (sampleLines.match(/\t/g) || []).length;
+
+  let delimiter = ',';
+  if (semiCount > commaCount && semiCount >= tabCount) {
+    delimiter = ';';
+  } else if (tabCount > commaCount && tabCount > semiCount) {
+    delimiter = '\t';
+  }
+
+  const parseRow = (rowStr: string): string[] => {
+    const cells: string[] = [];
+    let current = '';
+    let inQuotes = false;
+    for (let i = 0; i < rowStr.length; i++) {
+      const char = rowStr[i];
+      if (char === '"') {
+        if (inQuotes && rowStr[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
+      } else if (char === delimiter && !inQuotes) {
+        cells.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    cells.push(current.trim());
+    return cells;
+  };
+
+  // Find header row containing mass, radius, and angle
+  let headerRowIndex = -1;
+  let massIdx = -1;
+  let radiusIdx = -1;
+  let angleIdx = -1;
+  let colorIdx = -1;
+
+  for (let i = 0; i < lines.length; i++) {
+    const cells = parseRow(lines[i]);
+    const lowerCells = cells.map(c =>
+      c.toLowerCase()
+       .replace(/["']/g, '')
+       .replace(/[\s_\-()°]/g, '')
+    );
+
+    const mIdx = lowerCells.findIndex(c => c === 'mass' || c.startsWith('mass') || c === 'm');
+    const rIdx = lowerCells.findIndex(c => c === 'radius' || c.startsWith('radius') || c === 'r');
+    const aIdx = lowerCells.findIndex(c => c === 'angle' || c.startsWith('angle') || c === 'theta' || c === 'deg' || c === 'phase');
+    const cIdx = lowerCells.findIndex(c => c === 'color');
+
+    if (mIdx !== -1 && rIdx !== -1 && aIdx !== -1 && mIdx !== rIdx && rIdx !== aIdx && mIdx !== aIdx) {
+      headerRowIndex = i;
+      massIdx = mIdx;
+      radiusIdx = rIdx;
+      angleIdx = aIdx;
+      colorIdx = cIdx;
+      break;
+    }
+  }
+
+  const cleanNum = (raw: string): string => {
+    if (!raw) return '';
+    let val = raw.replace(/^["']|["']$/g, '').trim();
+    if (delimiter === ';' && val.includes(',') && !val.includes('.')) {
+      val = val.replace(',', '.');
+    }
+    const match = val.match(/[-+]?[0-9]*\.?[0-9]+/);
+    return match ? match[0] : '';
+  };
+
+  const parsedMasses: Mass[] = [];
+
+  if (headerRowIndex !== -1) {
+    for (let i = headerRowIndex + 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.toLowerCase().includes('final balancing') || line.toLowerCase().includes('sum of horizontal') || line.toLowerCase().includes('sum of vertical')) {
+        break;
+      }
+      const cells = parseRow(line);
+      if (cells.length <= Math.max(massIdx, radiusIdx, angleIdx)) continue;
+
+      const massVal = cleanNum(cells[massIdx]);
+      const radiusVal = cleanNum(cells[radiusIdx]);
+      const angleVal = cleanNum(cells[angleIdx]);
+
+      if (massVal !== '' || radiusVal !== '' || angleVal !== '') {
+        const id = parsedMasses.length + 1;
+        const color = (colorIdx !== -1 && cells[colorIdx]?.startsWith('#'))
+          ? cells[colorIdx]
+          : defaultColors[(id - 1) % defaultColors.length];
+
+        parsedMasses.push({
+          id,
+          mass: massVal,
+          radius: radiusVal,
+          angle: angleVal,
+          color,
+        });
+      }
+    }
+  } else {
+    // No header row: parse direct numeric rows
+    for (let i = 0; i < lines.length; i++) {
+      const cells = parseRow(lines[i]);
+      if (cells.length < 3) continue;
+      const massVal = cleanNum(cells[0]);
+      const radiusVal = cleanNum(cells[1]);
+      const angleVal = cleanNum(cells[2]);
+
+      if (massVal !== '' && radiusVal !== '' && angleVal !== '') {
+        const id = parsedMasses.length + 1;
+        parsedMasses.push({
+          id,
+          mass: massVal,
+          radius: radiusVal,
+          angle: angleVal,
+          color: defaultColors[(id - 1) % defaultColors.length],
+        });
+      }
+    }
+  }
+
+  if (parsedMasses.length === 0) {
+    throw new Error("Could not find valid mass data in CSV. Ensure header columns include 'mass', 'radius', and 'angle' with numerical values.");
+  }
+
+  return parsedMasses;
+}
 
 const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'];
 
@@ -49,6 +201,10 @@ const VectorDiagramSVG = ({
   showResultant = true,
   displayMode = 'both',
   showProjections = true,
+  activeFocusId = null,
+  lockedMassId = null,
+  onMassClick,
+  onMassHover,
   onVectorChange,
   isSimulating,
   sensitivityPoints = [],
@@ -161,7 +317,13 @@ const VectorDiagramSVG = ({
       width="100%" 
       height="100%" 
       viewBox="0 0 520 520" 
-      className="w-full h-full max-w-[520px] mx-auto overflow-visible touch-none"
+      className="w-full h-full max-w-[520px] mx-auto overflow-visible touch-none select-none"
+      onClick={(e) => {
+        // If clicking canvas background, unlock focus
+        if (e.target === svgRef.current || (e.target as HTMLElement).tagName === 'svg') {
+          onMassClick?.(null);
+        }
+      }}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerLeave={handlePointerUp}
@@ -187,12 +349,40 @@ const VectorDiagramSVG = ({
         const x2 = valid(cx + p2.x * scale);
         const y2 = valid(cy - p2.y * scale);
         const stepColor = step.color || colors[index % colors.length];
-        
+        const isFocused = activeFocusId === step.id;
+        const isLocked = lockedMassId === step.id;
+        const isAnyFocused = activeFocusId !== null && activeFocusId !== undefined;
+        const groupOpacity = isAnyFocused ? (isFocused ? 1 : 0.22) : 1;
+        const mainStrokeWidth = isFocused ? 5 : 3;
+
         return (
-          <g key={step.id}>
+          <g 
+            key={step.id}
+            opacity={groupOpacity}
+            className="transition-all duration-200 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMassClick?.(step.id);
+            }}
+            onPointerEnter={() => onMassHover?.(step.id)}
+            onPointerLeave={() => onMassHover?.(null)}
+          >
+            {/* Illuminated glow underlay line when focused */}
+            {isFocused && (
+              <line
+                x1={x1} y1={y1} x2={x2} y2={y2}
+                stroke={stepColor}
+                strokeWidth={12}
+                strokeLinecap="round"
+                opacity={0.38}
+                filter="url(#vector-glow)"
+                pointerEvents="none"
+              />
+            )}
+
             {/* Orthogonal projection lines (H/V components) */}
             {showForces && showProjections && (displayMode === 'components' || displayMode === 'both') && (
-              <g opacity="0.65" pointerEvents="none">
+              <g opacity={isFocused ? 0.95 : 0.65} pointerEvents="none">
                 {/* Horizontal component: from (x1, y1) to (x2, y1) */}
                 <line
                   x1={x1}
@@ -200,7 +390,7 @@ const VectorDiagramSVG = ({
                   x2={x2}
                   y2={y1}
                   stroke={stepColor}
-                  strokeWidth="1.2"
+                  strokeWidth={isFocused ? "1.8" : "1.2"}
                   strokeDasharray="3,3"
                 />
                 {/* Vertical component: from (x2, y1) to (x2, y2) */}
@@ -210,7 +400,7 @@ const VectorDiagramSVG = ({
                   x2={x2}
                   y2={y2}
                   stroke={stepColor}
-                  strokeWidth="1.2"
+                  strokeWidth={isFocused ? "1.8" : "1.2"}
                   strokeDasharray="3,3"
                 />
                 {/* Right angle corner indicator if step is long enough */}
@@ -219,8 +409,8 @@ const VectorDiagramSVG = ({
                     d={`M ${x2 - Math.sign(x2 - x1 || 1) * 6} ${y1} L ${x2 - Math.sign(x2 - x1 || 1) * 6} ${y1 - Math.sign(y1 - y2 || 1) * 6} L ${x2} ${y1 - Math.sign(y1 - y2 || 1) * 6}`}
                     fill="none"
                     stroke={stepColor}
-                    strokeWidth="1"
-                    opacity="0.8"
+                    strokeWidth={isFocused ? "1.6" : "1"}
+                    opacity="0.85"
                   />
                 )}
               </g>
@@ -229,22 +419,61 @@ const VectorDiagramSVG = ({
             <motion.line 
               x1={x1} y1={y1} x2={x2} y2={y2} 
               stroke={stepColor} 
-              strokeWidth="3" 
+              strokeWidth={mainStrokeWidth} 
               markerEnd="url(#arrowhead)" 
               initial={{ pathLength: 0 }}
               animate={{ pathLength: 1 }}
               transition={{ duration: 0.6, delay: index * 0.5, ease: "easeInOut" }}
             />
+
+            {/* Focused / Locked halo ring indicator */}
+            {isFocused && (
+              <circle
+                cx={x2}
+                cy={y2}
+                r="20"
+                fill="none"
+                stroke={stepColor}
+                strokeWidth={isLocked ? "2.5" : "1.8"}
+                strokeDasharray={isLocked ? "4,3" : "2,2"}
+                className={isLocked ? "animate-pulse" : "animate-spin"}
+                style={{ animationDuration: isLocked ? '2s' : '8s' }}
+                pointerEvents="none"
+              />
+            )}
+
             {/* Label for vector, fades & scales in after line completes */}
             <motion.g
               initial={{ scale: 0, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               transition={{ duration: 0.3, delay: (index + 1) * 0.5 - 0.1, ease: "easeOut" }}
             >
-              <circle id={`vec-m-${step.id}`} cx={x2} cy={y2} r="14" fill="white" stroke={stepColor} strokeWidth="1.5" />
-              <text x={x2} y={y2} textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight="bold" fill="#334155">
+              <circle 
+                id={`vec-m-${step.id}`} 
+                cx={x2} 
+                cy={y2} 
+                r={isFocused ? "16" : "14"} 
+                fill={isFocused ? "#eff6ff" : "white"} 
+                stroke={stepColor} 
+                strokeWidth={isFocused ? "2.5" : "1.5"} 
+              />
+              <text 
+                x={x2} 
+                y={y2} 
+                textAnchor="middle" 
+                dominantBaseline="middle" 
+                fontSize={isFocused ? "13" : "12"} 
+                fontWeight="bold" 
+                fill={isFocused ? "#1e40af" : "#334155"}
+              >
                 m{step.id}
               </text>
+              {isLocked && (
+                <g transform={`translate(${x2 + 7}, ${y2 - 18})`} pointerEvents="none">
+                  <circle cx="6" cy="6" r="7" fill="#2563eb" />
+                  <text x="6" y="8.5" textAnchor="middle" fontSize="8" fill="white" fontWeight="bold">📌</text>
+                </g>
+              )}
             </motion.g>
             
             {/* Vector force value / component label badge */}
@@ -257,22 +486,23 @@ const VectorDiagramSVG = ({
                 {displayMode === 'magnitude' ? (
                   <>
                     <rect 
-                      x={valid((x1 + x2) / 2 - 20)} 
-                      y={valid((y1 + y2) / 2 - 11)} 
-                      width="40" 
-                      height="22" 
+                      x={valid((x1 + x2) / 2 - (isFocused ? 23 : 20))} 
+                      y={valid((y1 + y2) / 2 - (isFocused ? 13 : 11))} 
+                      width={isFocused ? "46" : "40"} 
+                      height={isFocused ? "26" : "22"} 
                       fill="white" 
                       rx="4" 
-                      stroke="#cbd5e1" 
+                      stroke={isFocused ? stepColor : "#cbd5e1"} 
+                      strokeWidth={isFocused ? "1.8" : "1"}
                     />
                     <text 
                       x={valid((x1 + x2) / 2)} 
                       y={valid((y1 + y2) / 2 + 1)} 
                       textAnchor="middle" 
                       dominantBaseline="middle" 
-                      fontSize="11" 
-                      fontWeight="500" 
-                      fill="#475569"
+                      fontSize={isFocused ? "12" : "11"} 
+                      fontWeight={isFocused ? "bold" : "500"} 
+                      fill={isFocused ? "#0f172a" : "#475569"}
                     >
                       {formatNum(step.force || 0)}
                     </text>
@@ -280,22 +510,22 @@ const VectorDiagramSVG = ({
                 ) : displayMode === 'components' ? (
                   <>
                     <rect 
-                      x={valid((x1 + x2) / 2 - 38)} 
-                      y={valid((y1 + y2) / 2 - 16)} 
-                      width="76" 
-                      height="32" 
+                      x={valid((x1 + x2) / 2 - (isFocused ? 41 : 38))} 
+                      y={valid((y1 + y2) / 2 - (isFocused ? 18 : 16))} 
+                      width={isFocused ? "82" : "76"} 
+                      height={isFocused ? "36" : "32"} 
                       fill="white" 
                       rx="5" 
                       stroke={stepColor} 
-                      strokeWidth="1.2"
-                      strokeOpacity="0.5"
+                      strokeWidth={isFocused ? "2" : "1.2"}
+                      strokeOpacity={isFocused ? "1" : "0.5"}
                     />
                     <text 
                       x={valid((x1 + x2) / 2)} 
                       y={valid((y1 + y2) / 2 - 6)} 
                       textAnchor="middle" 
                       dominantBaseline="middle" 
-                      fontSize="10" 
+                      fontSize={isFocused ? "10.5" : "10"} 
                       fontWeight="600" 
                       fill="#334155"
                     >
@@ -306,7 +536,7 @@ const VectorDiagramSVG = ({
                       y={valid((y1 + y2) / 2 + 7)} 
                       textAnchor="middle" 
                       dominantBaseline="middle" 
-                      fontSize="10" 
+                      fontSize={isFocused ? "10.5" : "10"} 
                       fontWeight="600" 
                       fill="#334155"
                     >
@@ -316,23 +546,23 @@ const VectorDiagramSVG = ({
                 ) : (
                   <>
                     <rect 
-                      x={valid((x1 + x2) / 2 - 47)} 
-                      y={valid((y1 + y2) / 2 - 16)} 
-                      width="94" 
-                      height="32" 
+                      x={valid((x1 + x2) / 2 - (isFocused ? 51 : 47))} 
+                      y={valid((y1 + y2) / 2 - (isFocused ? 18 : 16))} 
+                      width={isFocused ? "102" : "94"} 
+                      height={isFocused ? "36" : "32"} 
                       fill="white" 
                       rx="5" 
-                      stroke="#cbd5e1" 
-                      strokeWidth="1"
+                      stroke={isFocused ? stepColor : "#cbd5e1"} 
+                      strokeWidth={isFocused ? "2" : "1"}
                     />
                     <text 
                       x={valid((x1 + x2) / 2)} 
                       y={valid((y1 + y2) / 2 - 6)} 
                       textAnchor="middle" 
                       dominantBaseline="middle" 
-                      fontSize="10" 
+                      fontSize={isFocused ? "10.5" : "10"} 
                       fontWeight="bold" 
-                      fill="#1e293b"
+                      fill={isFocused ? "#0f172a" : "#1e293b"}
                     >
                       |F| = {formatNum(step.force || 0)}
                     </text>
@@ -341,9 +571,9 @@ const VectorDiagramSVG = ({
                       y={valid((y1 + y2) / 2 + 7)} 
                       textAnchor="middle" 
                       dominantBaseline="middle" 
-                      fontSize="9" 
+                      fontSize={isFocused ? "9.5" : "9"} 
                       fontWeight="500"
-                      fill="#64748b"
+                      fill={isFocused ? "#334155" : "#64748b"}
                     >
                       H:{formatNum(step.h || 0)}  V:{formatNum(step.v || 0)}
                     </text>
@@ -393,8 +623,11 @@ const VectorDiagramSVG = ({
             const resH = resultantForce * Math.cos(rotResultantAngleRad);
             const resV = resultantForce * Math.sin(rotResultantAngleRad);
 
+            const isAnyFocused = activeFocusId !== null && activeFocusId !== undefined;
+            const resultantOpacity = isAnyFocused ? 0.35 : 1;
+
             return (
-              <>
+              <g opacity={resultantOpacity} className="transition-opacity duration-200">
                 {/* Resultant orthogonal projection lines (H/V) */}
                 {showProjections && (displayMode === 'components' || displayMode === 'both') && (
                   <g opacity="0.65" pointerEvents="none">
@@ -571,7 +804,7 @@ const VectorDiagramSVG = ({
                     </g>
                   )}
                 </motion.g>
-              </>
+              </g>
             );
           })()}
         </>
@@ -582,6 +815,13 @@ const VectorDiagramSVG = ({
       <text x={valid(cx)} y={valid(cy)} textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight="bold" fill="#334155">O</text>
 
       <defs>
+        <filter id="vector-glow" x="-30%" y="-30%" width="160%" height="160%">
+          <feGaussianBlur stdDeviation="3.5" result="blur" />
+          <feMerge>
+            <feMergeNode in="blur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
         <marker id="arrowhead" markerWidth="6" markerHeight="4" refX="5" refY="2" orient="auto">
           <polygon points="0 0, 6 2, 0 4" fill="#64748b" />
         </marker>
@@ -611,7 +851,11 @@ const SpaceDiagramSVG = ({
   showIndividualMasses = true,
   showBalancingMass = true,
   showToleranceCone = true,
-  showAngularGrid = true
+  showAngularGrid = true,
+  activeFocusId = null,
+  lockedMassId = null,
+  onMassClick,
+  onMassHover
 }: any) => {
   const [isDragging, setIsDragging] = React.useState(false);
   const svgRef = React.useRef<SVGSVGElement>(null);
@@ -660,7 +904,18 @@ const SpaceDiagramSVG = ({
   };
 
   return (
-    <svg ref={svgRef} width="100%" height="100%" viewBox="0 0 520 520" className="w-full max-w-[520px] mx-auto overflow-visible touch-none">
+    <svg 
+      ref={svgRef} 
+      width="100%" 
+      height="100%" 
+      viewBox="0 0 520 520" 
+      className="w-full max-w-[520px] mx-auto overflow-visible touch-none select-none"
+      onClick={(e) => {
+        if (e.target === svgRef.current || (e.target as HTMLElement).tagName === 'svg') {
+          onMassClick?.(null);
+        }
+      }}
+    >
       {/* Axes */}
       {showAxes && (
         <>
@@ -710,15 +965,52 @@ const SpaceDiagramSVG = ({
         const rad = (((step.absoluteAngle || 0) + rotationOffset) % 360) * Math.PI / 180;
         const x = valid(cx + Math.cos(rad) * (step.radius || 0) * scale);
         const y = valid(cy - Math.sin(rad) * (step.radius || 0) * scale);
-        
+        const stepColor = step.color || colors[index % colors.length];
+        const isFocused = activeFocusId === step.id;
+        const isLocked = lockedMassId === step.id;
+        const isAnyFocused = activeFocusId !== null && activeFocusId !== undefined;
+        const groupOpacity = isAnyFocused ? (isFocused ? 1 : 0.22) : 1;
+        const mainStrokeWidth = isFocused ? 4.5 : 2.5;
+
         return (
-          <g key={step.id}>
-            <line x1={cx} y1={cy} x2={x} y2={y} stroke={(step.color || colors[index % colors.length])} strokeWidth="2.5" markerEnd="url(#arrowhead)" />
-            <circle id={`spa-m-${step.id}`} cx={x} cy={y} r="16" fill="white" stroke={(step.color || colors[index % colors.length])} strokeWidth="2" />
-            <text x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize="12" fontWeight="bold" fill="#334155">
+          <g 
+            key={step.id} 
+            opacity={groupOpacity} 
+            className="transition-all duration-200 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMassClick?.(step.id);
+            }}
+            onPointerEnter={() => onMassHover?.(step.id)}
+            onPointerLeave={() => onMassHover?.(null)}
+          >
+            {/* Halo pulse ring for focused mass */}
+            {isFocused && (
+              <circle
+                cx={x}
+                cy={y}
+                r="22"
+                fill="none"
+                stroke={stepColor}
+                strokeWidth={isLocked ? "2.5" : "1.8"}
+                strokeDasharray={isLocked ? "4,3" : "2,2"}
+                className={isLocked ? "animate-pulse" : "animate-spin"}
+                style={{ animationDuration: isLocked ? '2s' : '8s' }}
+                pointerEvents="none"
+              />
+            )}
+            <line x1={cx} y1={cy} x2={x} y2={y} stroke={stepColor} strokeWidth={mainStrokeWidth} markerEnd="url(#arrowhead)" />
+            <circle id={`spa-m-${step.id}`} cx={x} cy={y} r={isFocused ? "18" : "16"} fill={isFocused ? "#eff6ff" : "white"} stroke={stepColor} strokeWidth={isFocused ? "3" : "2"} />
+            <text x={x} y={y} textAnchor="middle" dominantBaseline="middle" fontSize={isFocused ? "13" : "12"} fontWeight="bold" fill={isFocused ? "#1e40af" : "#334155"}>
               m{step.id}
             </text>
-            <text x={x} y={valid(y - 25)} textAnchor="middle" fontSize="11" fill="#475569">
+            {isLocked && (
+              <g transform={`translate(${x + 8}, ${y - 20})`} pointerEvents="none">
+                <circle cx="6" cy="6" r="7" fill="#2563eb" />
+                <text x="6" y="8.5" textAnchor="middle" fontSize="8" fill="white" fontWeight="bold">📌</text>
+              </g>
+            )}
+            <text x={x} y={valid(y - 26)} textAnchor="middle" fontSize={isFocused ? "12" : "11"} fontWeight={isFocused ? "bold" : "normal"} fill={isFocused ? "#0f172a" : "#475569"}>
               {step.mass || 0}{massUnit}, {step.radius || 0}{lengthUnit}
             </text>
           </g>
@@ -838,6 +1130,34 @@ function AppContent() {
   const [enableCentrifugal, setEnableCentrifugal] = useState(false);
   const [rpm, setRpm] = useState<string>('');
 
+  // CSV File Upload & Status State
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [csvStatus, setCsvStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  React.useEffect(() => {
+    if (csvStatus) {
+      const timer = setTimeout(() => setCsvStatus(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [csvStatus]);
+
+  // Help & Unit Conversion Guide Modal State
+  const [showHelpModal, setShowHelpModal] = useState(false);
+
+  // Global key listener for '?' or 'h' to open Help/Unit Guide
+  React.useEffect(() => {
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)) return;
+      if (e.key === '?' || (e.key.toLowerCase() === 'h' && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+        e.preventDefault();
+        setShowHelpModal(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKey);
+    return () => window.removeEventListener('keydown', handleGlobalKey);
+  }, []);
+
   // Active modal preview state: 'vector' | 'space' | null
   const [activePreviewModal, setActivePreviewModal] = useState<'vector' | 'space' | null>(null);
 
@@ -866,6 +1186,28 @@ function AppContent() {
     }, 3000);
     return () => clearInterval(interval);
   }, [vecAutoCycle]);
+
+  // Interactive Mass Highlighting & Locked Focus State
+  const [lockedMassId, setLockedMassId] = useState<number | null>(null);
+  const [hoveredMassId, setHoveredMassId] = useState<number | null>(null);
+  const activeFocusId = hoveredMassId ?? lockedMassId;
+
+  const handleMassClick = (id: number | null) => {
+    if (id === null) {
+      setLockedMassId(null);
+      return;
+    }
+    setLockedMassId((prev) => (prev === id ? null : id));
+  };
+
+  const handleMassHover = (id: number | null) => {
+    setHoveredMassId(id);
+  };
+
+  const handleClearFocus = () => {
+    setLockedMassId(null);
+    setHoveredMassId(null);
+  };
 
   // Space Diagram Layer Toggles
   const [spaShowAxes, setSpaShowAxes] = useState(true);
@@ -898,6 +1240,7 @@ function AppContent() {
   }, [isSimulating]);
 
   const resultsRef = React.useRef<HTMLDivElement>(null);
+  const workspaceRef = React.useRef<HTMLDivElement>(null);
 
   const scrollToResults = () => {
     setTimeout(() => {
@@ -905,20 +1248,51 @@ function AppContent() {
     }, 100);
   };
 
+  const scrollToWorkspace = () => {
+    setTimeout(() => {
+      workspaceRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
+  };
+
+  const loadExampleCase = () => {
+    setMassUnit('kg');
+    setLengthUnit('m');
+    setBalRadius('0.25');
+    setAngleTolerance('5');
+    setEnableCentrifugal(true);
+    setRpm('1500');
+    setMasses([
+      { id: 1, mass: '12', radius: '0.20', angle: '0', color: defaultColors[0] },
+      { id: 2, mass: '16', radius: '0.15', angle: '60', color: defaultColors[1] },
+      { id: 3, mass: '18', radius: '0.25', angle: '135', color: defaultColors[2] },
+      { id: 4, mass: '15', radius: '0.30', angle: '270', color: defaultColors[3] },
+    ]);
+    setManualBalAngle(null);
+    setOpinion(null);
+    setOpinionError(null);
+    setLockedMassId(null);
+    setHoveredMassId(null);
+    scrollToWorkspace();
+  };
+
   const resetToDefaults = () => {
     setMassUnit('kg');
     setLengthUnit('m');
     setBalRadius('');
     setAngleTolerance('5');
+    setEnableCentrifugal(false);
+    setRpm('');
     setMasses([
-      { id: 1, mass: '', radius: '', angle: '' },
-      { id: 2, mass: '', radius: '', angle: '' },
-      { id: 3, mass: '', radius: '', angle: '' },
-      { id: 4, mass: '', radius: '', angle: '' },
+      { id: 1, mass: '', radius: '', angle: '', color: defaultColors[0] },
+      { id: 2, mass: '', radius: '', angle: '', color: defaultColors[1] },
+      { id: 3, mass: '', radius: '', angle: '', color: defaultColors[2] },
+      { id: 4, mass: '', radius: '', angle: '', color: defaultColors[3] },
     ]);
     setManualBalAngle(null);
     setOpinion(null);
     setOpinionError(null);
+    setLockedMassId(null);
+    setHoveredMassId(null);
   };
 
   const toggleMassUnit = (unit: 'kg' | 'lbs') => {
@@ -1220,6 +1594,68 @@ function AppContent() {
     document.body.removeChild(link);
   };
 
+  const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target?.result as string;
+        if (!text || text.trim().length === 0) {
+          throw new Error("The selected file is empty.");
+        }
+
+        const parsedMasses = parseCSVToMasses(text);
+        if (parsedMasses.length === 0) {
+          throw new Error("No valid mass entries found. Please ensure columns: 'mass', 'radius', and 'angle'.");
+        }
+
+        setMasses(parsedMasses);
+        setLockedMassId(null);
+        setHoveredMassId(null);
+        setCsvStatus({
+          type: 'success',
+          message: `Successfully loaded ${parsedMasses.length} masses from "${file.name}".`
+        });
+        scrollToResults();
+      } catch (err: any) {
+        setCsvStatus({
+          type: 'error',
+          message: err.message || "Failed to process CSV file."
+        });
+      } finally {
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    };
+
+    reader.onerror = () => {
+      setCsvStatus({
+        type: 'error',
+        message: "Failed to read the file. Please check file permissions and try again."
+      });
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    };
+
+    reader.readAsText(file);
+  };
+
+  const downloadCSVTemplate = () => {
+    const template = "mass,radius,angle\n2.5,0.4,30\n3.0,0.5,120\n1.8,0.3,210\n4.2,0.6,300\n";
+    const blob = new Blob([template], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "balancing_mass_template.csv";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const exportSVG = (type: 'vector' | 'space') => {
     // We can select the svg element inside the active dialog or main page
     const svgEl = document.querySelector(`.preview-svg-${type} svg`);
@@ -1295,89 +1731,222 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-6 md:p-12 print:bg-white print:p-0 print:m-0">
-      <div className="max-w-5xl mx-auto space-y-8">
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 sm:p-6 lg:p-10 print:bg-white print:p-0 print:m-0 overflow-x-hidden selection:bg-blue-100 selection:text-blue-900">
+      <div className="max-w-6xl mx-auto space-y-8">
         
-        {/* Header */}
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-6 print:border-b-0 print:pb-2">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-blue-600 rounded-xl text-white shadow-sm">
-              <Calculator size={28} />
+        {/* Modern Engineering Header */}
+        <header className="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-4 sm:p-5 flex flex-col xl:flex-row xl:items-center justify-between gap-4 print:border-none print:p-0">
+          <div className="flex items-center gap-3.5">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-blue-600 via-indigo-600 to-slate-900 flex items-center justify-center text-white shadow-sm shrink-0">
+              <Disc size={24} className="animate-spin-slow" />
             </div>
             <div>
-              <h1 className="text-2xl md:text-3xl font-bold tracking-tight text-slate-900">
-                Rotating Masses Balancer
-              </h1>
-              <p className="text-slate-500 mt-1">
-                Determine the magnitude and position of a balancing mass.
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900">
+                  Roller Balance Calculator
+                </h1>
+                <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200/80 px-2 py-0.5 rounded-full">
+                  <ShieldCheck size={12} className="text-blue-600" />
+                  ISO 1940
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-600 font-medium">
+                High-precision multi-mass and locomotive dynamic rotational balancing engine
               </p>
             </div>
           </div>
-          
-          <div className="flex items-center gap-4 print:hidden">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-slate-500 font-medium px-1">Mass Unit</label>
-              <div className="flex bg-slate-100 p-1 rounded-lg">
-                <button 
-                  onClick={() => toggleMassUnit('kg')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${massUnit === 'kg' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  kg
-                </button>
-                <button 
-                  onClick={() => toggleMassUnit('lbs')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${massUnit === 'lbs' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  lbs
-                </button>
+
+          {/* Header Action Controls */}
+          <div className="flex flex-wrap items-center gap-3 print:hidden">
+            {/* Unit System Toggles */}
+            <div className="flex items-center gap-2 bg-slate-100/80 p-1 rounded-xl border border-slate-200/60">
+              <div className="flex items-center">
+                <span className="text-[11px] font-bold text-slate-600 uppercase px-2">Mass</span>
+                <div className="flex bg-white rounded-lg p-0.5 border border-slate-200/60 shadow-xs">
+                  <button 
+                    type="button"
+                    onClick={() => toggleMassUnit('kg')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all ${massUnit === 'kg' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'}`}
+                  >
+                    kg
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => toggleMassUnit('lbs')}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-md transition-all ${massUnit === 'lbs' ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'}`}
+                  >
+                    lbs
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-4 w-px bg-slate-300"></div>
+
+              <div className="flex items-center">
+                <span className="text-[11px] font-bold text-slate-600 uppercase px-2">Length</span>
+                <div className="flex bg-white rounded-lg p-0.5 border border-slate-200/60 shadow-xs">
+                  {(['m', 'in', 'cm', 'mm'] as const).map((unit) => (
+                    <button 
+                      key={unit}
+                      type="button"
+                      onClick={() => toggleLengthUnit(unit)}
+                      className={`px-2 py-1 text-xs font-bold rounded-md transition-all ${lengthUnit === unit ? 'bg-blue-600 text-white shadow-xs' : 'text-slate-700 hover:text-slate-900'}`}
+                    >
+                      {unit}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-slate-500 font-medium px-1">Length Unit</label>
-              <div className="flex bg-slate-100 p-1 rounded-lg">
-                <button 
-                  onClick={() => toggleLengthUnit('m')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lengthUnit === 'm' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  m
-                </button>
-                <button 
-                  onClick={() => toggleLengthUnit('in')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lengthUnit === 'in' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  in
-                </button>
-                <button 
-                  onClick={() => toggleLengthUnit('cm')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lengthUnit === 'cm' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  cm
-                </button>
-                <button 
-                  onClick={() => toggleLengthUnit('mm')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${lengthUnit === 'mm' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
-                >
-                  mm
-                </button>
-              </div>
+
+            {/* Quick Actions */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShowHelpModal(true)}
+                title="Open Unit Conversion & Balancing Quick-Reference Guide (Press ? or H)"
+                className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 transition-colors px-3 py-2 rounded-lg border border-blue-200/80 shadow-xs"
+              >
+                <HelpCircle size={14} className="text-blue-600" />
+                <span>Unit Guide & Help</span>
+                <span className="text-[10px] font-mono text-blue-600 bg-blue-200/60 px-1 py-0.5 rounded hidden sm:inline font-bold">?</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                title="Upload CSV containing 'mass', 'radius', and 'angle' columns"
+                className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition-colors px-3 py-2 rounded-lg border border-slate-200/80 bg-white shadow-xs"
+              >
+                <Upload size={14} className="text-blue-600" />
+                <span className="hidden sm:inline">Import CSV</span>
+              </button>
+              <button
+                type="button"
+                onClick={downloadPDF}
+                disabled={calculations.hasErrors}
+                title={calculations.hasErrors ? "Resolve errors first to download report" : "Export ISO-standard PDF engineering report"}
+                className="disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-blue-700 hover:bg-blue-50 transition-colors px-3 py-2 rounded-lg border border-slate-200/80 bg-white shadow-xs"
+              >
+                <Download size={14} className="text-blue-600" />
+                <span className="hidden sm:inline">Report (PDF)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 hover:bg-slate-100 transition-colors px-2.5 py-2 rounded-lg border border-slate-200/80 bg-white shadow-xs"
+                title="Print current calculation dashboard"
+              >
+                <Printer size={14} />
+              </button>
+              <button
+                type="button"
+                onClick={resetToDefaults}
+                className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-red-700 hover:bg-red-50 transition-colors px-2.5 py-2 rounded-lg border border-slate-200/80 bg-white shadow-xs"
+                title="Reset all inputs to defaults"
+              >
+                <RotateCcw size={14} />
+              </button>
             </div>
           </div>
         </header>
 
-        {/* Mode Switcher */}
-        <div className="flex justify-center -mt-2 mb-4 print:hidden">
-          <div className="flex bg-slate-200/50 p-1 rounded-xl w-fit">
+        {/* Professional Hero Section */}
+        <section className="bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 rounded-3xl p-6 sm:p-8 md:p-10 text-white shadow-lg relative overflow-hidden print:hidden border border-slate-800">
+          {/* Subtle background decorative technical blueprint circles */}
+          <div className="absolute -right-20 -bottom-20 w-96 h-96 rounded-full border border-blue-500/10 pointer-events-none"></div>
+          <div className="absolute -right-10 -bottom-10 w-72 h-72 rounded-full border border-blue-400/20 pointer-events-none"></div>
+          <div className="absolute right-20 bottom-20 w-32 h-32 rounded-full border border-dashed border-indigo-400/30 pointer-events-none"></div>
+
+          <div className="relative z-10 max-w-3xl space-y-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-mono tracking-wider uppercase text-blue-300 bg-blue-500/20 px-2.5 py-1 rounded-md border border-blue-400/30">
+                Rotordynamics & Vibration Mitigation
+              </span>
+              <span className="text-[11px] font-mono tracking-wider uppercase text-slate-300 bg-slate-800/80 px-2.5 py-1 rounded-md border border-slate-700">
+                Single-Plane & Multi-Plane Balancing
+              </span>
+            </div>
+
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold tracking-tight text-white leading-tight">
+              Roller & Rotor Dynamic Balance Calculator
+            </h2>
+
+            <p className="text-sm sm:text-base text-slate-300 leading-relaxed font-normal">
+              Analytically resolve orthogonal centrifugal force vectors (<span className="text-blue-200 font-mono">ΣH, ΣV</span>) across multiple rotating mass planes. Determine the required counter-balancing mass magnitude (<span className="text-blue-200 font-mono">m_b = R/r_b</span>) and opposite mounting angle (<span className="text-blue-200 font-mono">θ_b = α + 180°</span>) for high-speed shafts and industrial rollers.
+            </p>
+
+            {/* Primary Action Buttons */}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={scrollToWorkspace}
+                className="px-5 py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer"
+              >
+                <span>Start Calculation</span>
+                <ArrowDown size={16} />
+              </button>
+
+              <button
+                type="button"
+                onClick={loadExampleCase}
+                className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm transition-all border border-white/15 flex items-center gap-2 cursor-pointer"
+                title="Populate standard 4-mass rotating system with 1500 RPM dynamic model"
+              >
+                <Activity size={16} className="text-blue-400" />
+                <span>Load Benchmark Example</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-sm transition-all border border-white/15 flex items-center gap-2 cursor-pointer"
+                title="Upload CSV data file with mass, radius, and angle"
+              >
+                <Upload size={16} className="text-indigo-300" />
+                <span>Upload CSV File</span>
+              </button>
+            </div>
+
+            {/* 4 Capability Cards */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 pt-4 border-t border-white/10">
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <p className="text-[11px] font-mono text-blue-300 uppercase">01. Vector Resolution</p>
+                <p className="text-xs text-slate-300 mt-0.5">Orthogonal ΣH & ΣV decomposition</p>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <p className="text-[11px] font-mono text-blue-300 uppercase">02. Counterweight</p>
+                <p className="text-xs text-slate-300 mt-0.5">Precise m_b & 180° phase inversion</p>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <p className="text-[11px] font-mono text-blue-300 uppercase">03. Speed Physics</p>
+                <p className="text-xs text-slate-300 mt-0.5">Centrifugal forces at operational RPM</p>
+              </div>
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <p className="text-[11px] font-mono text-blue-300 uppercase">04. Engineering PDF</p>
+                <p className="text-xs text-slate-300 mt-0.5">Formal report & vector SVG blueprints</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Calculation Mode Switcher */}
+        <div className="flex justify-center print:hidden">
+          <div className="inline-flex bg-slate-200/70 p-1 rounded-2xl border border-slate-300/60 shadow-xs">
             <button 
+              type="button"
               onClick={() => setCalcMode('single_plane')}
-              className={`px-6 py-2 text-sm font-semibold rounded-lg transition-all ${calcMode === 'single_plane' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'}`}
+              className={`px-5 sm:px-8 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition-all flex items-center gap-2 ${calcMode === 'single_plane' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
             >
-              Rotating Mass Balancing
+              <Disc size={16} className={calcMode === 'single_plane' ? 'text-blue-600' : 'text-slate-500'} />
+              <span>Rotating Mass Balancer (Single Plane)</span>
             </button>
             <button 
+              type="button"
               onClick={() => setCalcMode('locomotive')}
-              className={`px-6 py-2 text-sm font-semibold rounded-lg transition-all ${calcMode === 'locomotive' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200'}`}
+              className={`px-5 sm:px-8 py-2.5 text-xs sm:text-sm font-bold rounded-xl transition-all flex items-center gap-2 ${calcMode === 'locomotive' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-700 hover:text-slate-900'}`}
             >
-              Partial Balancing of Locomotives
+              <Layers size={16} className={calcMode === 'locomotive' ? 'text-blue-600' : 'text-slate-500'} />
+              <span>Partial Balancing of Locomotives</span>
             </button>
           </div>
         </div>
@@ -1386,343 +1955,555 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
           <LocomotiveBalancing />
         ) : (
           <>
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 print:block">
+        {/* Workspace Form & Results */}
+        <div ref={workspaceRef} id="calculator-workspace" className="grid grid-cols-1 lg:grid-cols-12 gap-8 print:block">
           
-          {/* Inputs Section */}
+          {/* Inputs Column */}
           <section className="lg:col-span-5 space-y-6 print:hidden">
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <div className="flex items-center justify-between mb-6">
-                <div className="flex items-center gap-2">
-                  <Settings2 size={20} className="text-blue-600" />
-                  <h2 className="text-lg font-semibold">System Parameters</h2>
+            <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-5 sm:p-6 space-y-6">
+              
+              {/* Card Header */}
+              <div className="flex items-center justify-between flex-wrap gap-2 pb-4 border-b border-slate-100">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center font-bold">
+                    <Settings2 size={18} />
+                  </div>
+                  <div>
+                    <h2 className="text-base sm:text-lg font-bold text-slate-900">System Parameters</h2>
+                    <p className="text-xs text-slate-600 font-medium">{masses.length} Active Mass Plane{masses.length !== 1 ? 's' : ''}</p>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
+
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {/* Hidden file input for CSV uploading */}
+                  <input
+                    ref={fileInputRef}
+                    id="mass-csv-file-input"
+                    type="file"
+                    accept=".csv,text/csv,text/plain"
+                    className="hidden"
+                    aria-label="Upload CSV file containing mass, radius, and angle"
+                    onChange={handleCSVUpload}
+                  />
                   <button
-                    onClick={() => window.print()}
-                    className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-md"
-                  >
-                    <Printer size={14} />
-                    Print
-                  </button>
-                  <button
-                    onClick={downloadPDF}
-                    disabled={calculations.hasErrors}
-                    title={calculations.hasErrors ? "Please resolve input errors first" : "Download formal engineering report (PDF)"}
-                    className="disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 text-xs font-medium text-slate-600 hover:text-slate-900 transition-colors bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-md"
-                  >
-                    <Download size={14} className="text-blue-600" />
-                    Download PDF
-                  </button>
-                  <button
+                    type="button"
                     onClick={exportCSV}
                     disabled={calculations.hasErrors}
-                    title={calculations.hasErrors ? "Please resolve input errors first" : "Export to CSV"}
-                    className="disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-md"
+                    title={calculations.hasErrors ? "Resolve errors first to export CSV" : "Export table to CSV format"}
+                    className="disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 transition-colors bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg"
                   >
-                    <FileSpreadsheet size={14} />
-                    CSV
+                    <FileSpreadsheet size={13} />
+                    <span>CSV</span>
                   </button>
                   <button
-                    onClick={resetToDefaults}
-                    className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-900 transition-colors bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-md"
+                    type="button"
+                    onClick={loadExampleCase}
+                    title="Load standard engineering example"
+                    className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 transition-colors bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg border border-blue-200/60"
                   >
-                    <RotateCcw size={14} />
-                    Reset
+                    <Activity size={13} />
+                    <span>Demo</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={resetToDefaults}
+                    className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 hover:text-slate-900 transition-colors bg-slate-100 hover:bg-slate-200 px-2.5 py-1.5 rounded-lg"
+                    title="Reset to empty inputs"
+                  >
+                    <RotateCcw size={13} />
+                    <span>Reset</span>
                   </button>
                 </div>
               </div>
-              
-              <div className="space-y-6">
-                {masses.map((m, index) => {
-                  const stepData = calculations.steps.find(s => s.id === m.id);
-                  const force = stepData?.force || 0;
-                  const isWarning = !calculations.hasErrors && calculations.thresholds.unbalanceWarning > 0 && force >= calculations.thresholds.unbalanceWarning;
-                  const isCritical = !calculations.hasErrors && calculations.thresholds.unbalanceCritical > 0 && force >= calculations.thresholds.unbalanceCritical;
 
-                  return (
-                  <div key={m.id} className={`p-4 rounded-xl border relative group transition-colors ${isCritical ? 'bg-red-50/30 border-red-100' : isWarning ? 'bg-amber-50/30 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
-                    {masses.length > 1 && (
-                      <button 
-                        onClick={() => removeMass(m.id)}
-                        className="absolute top-4 right-4 p-1 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-md transition-colors"
-                        title="Remove Mass"
-                      >
-                        <X size={16} />
-                      </button>
+              {/* CSV Upload Status Notification */}
+              {csvStatus && (
+                <div className={`p-3.5 rounded-xl flex items-center justify-between text-xs font-medium border ${
+                  csvStatus.type === 'success' 
+                    ? 'bg-emerald-50 text-emerald-900 border-emerald-200' 
+                    : 'bg-red-50 text-red-900 border-red-200'
+                }`}>
+                  <div className="flex items-center gap-2">
+                    {csvStatus.type === 'success' ? (
+                      <Check size={16} className="text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle size={16} className="text-red-600 shrink-0" />
                     )}
-                    <h3 className="text-sm font-medium text-slate-700 mb-3 flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <span className="flex items-center gap-2">
-                          Mass {m.id}
+                    <span>{csvStatus.message}</span>
+                  </div>
+                  <button 
+                    type="button"
+                    onClick={() => setCsvStatus(null)} 
+                    className="text-slate-500 hover:text-slate-800 ml-2"
+                    aria-label="Dismiss CSV status"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              )}
+
+              {/* Group 1: Mass Planes Inputs */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center gap-1.5">
+                    <span>1. Rotating Mass Planes</span>
+                    <button
+                      type="button"
+                      onClick={() => setShowHelpModal(true)}
+                      title="Open Unit Conversion & Reference Guide"
+                      className="text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 font-semibold px-2 py-0.5 rounded-md border border-blue-200/60 transition-colors flex items-center gap-1 normal-case text-[11px]"
+                    >
+                      <Scale size={11} />
+                      <span>{massUnit}, {lengthUnit}, deg (Convert)</span>
+                    </button>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={downloadCSVTemplate}
+                    className="text-[11px] text-blue-700 hover:text-blue-900 hover:underline font-semibold"
+                    title="Download template CSV with mass,radius,angle columns"
+                  >
+                    CSV Template
+                  </button>
+                </div>
+                
+                <div className="space-y-3.5">
+                  {masses.map((m, index) => {
+                    const stepData = calculations.steps.find(s => s.id === m.id);
+                    const force = stepData?.force || 0;
+                    const isWarning = !calculations.hasErrors && calculations.thresholds.unbalanceWarning > 0 && force >= calculations.thresholds.unbalanceWarning;
+                    const isCritical = !calculations.hasErrors && calculations.thresholds.unbalanceCritical > 0 && force >= calculations.thresholds.unbalanceCritical;
+
+                    return (
+                    <div 
+                      key={m.id} 
+                      className={`p-4 rounded-xl border transition-all relative ${
+                        isCritical 
+                          ? 'bg-red-50/40 border-red-200' 
+                          : isWarning 
+                            ? 'bg-amber-50/40 border-amber-200' 
+                            : 'bg-slate-50/70 hover:bg-slate-50 border-slate-200/70'
+                      }`}
+                    >
+                      {masses.length > 1 && (
+                        <button 
+                          type="button"
+                          onClick={() => removeMass(m.id)}
+                          className="absolute top-3 right-3 p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Remove Mass"
+                          aria-label={`Remove Mass ${m.id}`}
+                        >
+                          <X size={15} />
+                        </button>
+                      )}
+                      
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2.5">
+                          <label 
+                            htmlFor={`mass-color-${m.id}`}
+                            className="flex items-center justify-center w-6 h-6 rounded-md cursor-pointer border border-slate-200 hover:scale-105 transition-transform relative shadow-2xs"
+                            style={{ backgroundColor: m.color || defaultColors[index % defaultColors.length] }}
+                            title="Customize Vector Color"
+                          >
+                            <input 
+                              id={`mass-color-${m.id}`}
+                              type="color" 
+                              aria-label={`Color for Mass ${m.id}`}
+                              value={m.color || defaultColors[index % defaultColors.length]}
+                              onChange={(e) => updateMass(m.id, 'color', e.target.value)}
+                              className="opacity-0 absolute inset-0 w-full h-full cursor-pointer"
+                            />
+                          </label>
+                          <span className="text-sm font-bold text-slate-800">
+                            Mass Plane {m.id}
+                          </span>
                           {isCritical ? (
-                            <span title={`Critical: High Unbalance Contribution (${formatNum(force)} ${massUnit}·${lengthUnit})`}>
-                              <AlertTriangle size={14} className="text-red-500" />
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-red-700 bg-red-100/80 px-2 py-0.5 rounded-md" title={`Critical: High Unbalance Contribution (${formatNum(force)} ${massUnit}·${lengthUnit})`}>
+                              <AlertTriangle size={11} className="text-red-600" />
+                              Critical
                             </span>
                           ) : isWarning ? (
-                            <span title={`Warning: Elevated Unbalance Contribution (${formatNum(force)} ${massUnit}·${lengthUnit})`}>
-                              <AlertTriangle size={14} className="text-amber-500" />
+                            <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-amber-800 bg-amber-100/80 px-2 py-0.5 rounded-md" title={`Warning: Elevated Unbalance Contribution (${formatNum(force)} ${massUnit}·${lengthUnit})`}>
+                              <AlertTriangle size={11} className="text-amber-600" />
+                              Elevated
                             </span>
                           ) : null}
-                        </span>
-                        <label 
-                          className="flex items-center justify-center w-6 h-6 rounded-full cursor-pointer hover:bg-slate-200 transition-colors relative"
-                          title="Customize Vector Color"
-                        >
-                          <Palette size={14} style={{ color: m.color || defaultColors[index % defaultColors.length] }} />
-                          <input 
-                            type="color" 
-                            value={m.color || defaultColors[index % defaultColors.length]}
-                            onChange={(e) => updateMass(m.id, 'color', e.target.value)}
-                            className="opacity-0 absolute -inset-2 w-10 h-10 cursor-pointer"
-                          />
-                        </label>
+                        </div>
                       </div>
-                    </h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-xs text-slate-500 mb-1 flex items-center">
-                          Mass ({massUnit})
-                          <InfoTooltip text="Magnitude of the rotating mass (m) causing centrifugal force." />
-                        </label>
-                        <input 
-                          type="number" 
-                          value={m.mass}
-                          onChange={(e) => updateMass(m.id, 'mass', e.target.value)}
-                          className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
-                            !isValidNumber(m.mass) 
-                              ? 'bg-red-50 border-red-300 focus:ring-red-500' 
-                              : 'bg-white border-slate-200 focus:ring-blue-500'
-                          }`}
-                        />
-                      </div>
-                      <div>
-                        <label className="text-xs text-slate-500 mb-1 flex items-center">
-                          Radius ({lengthUnit})
-                          <InfoTooltip text="Distance (r) from the axis of rotation to the mass center." />
-                        </label>
-                        <input 
-                          type="number" 
-                          value={m.radius}
-                          onChange={(e) => updateMass(m.id, 'radius', e.target.value)}
-                          className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
-                            !isValidNumber(m.radius) 
-                              ? 'bg-red-50 border-red-300 focus:ring-red-500' 
-                              : 'bg-white border-slate-200 focus:ring-blue-500'
-                          }`}
-                        />
-                      </div>
-                      <div className="col-span-2">
-                        <label className="text-xs text-slate-500 mb-1 flex items-center">
-                          Absolute Angle (°)
-                          <InfoTooltip text="Angular position (θ) of the mass relative to the reference axis (0°)." />
-                        </label>
-                        <input 
-                          type="number" 
-                          value={m.angle}
-                          onChange={(e) => updateMass(m.id, 'angle', e.target.value)}
-                          className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
-                            !isValidNumber(m.angle) 
-                              ? 'bg-red-50 border-red-300 focus:ring-red-500' 
-                              : 'bg-white border-slate-200 focus:ring-blue-500'
-                          }`}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-                })}
 
-                <div className="flex gap-2 relative">
-                  <button
-                    onClick={addMass}
-                    className="flex-1 py-3 flex items-center justify-center gap-2 text-sm font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-xl transition-colors border border-blue-200 border-dashed"
-                  >
-                    <Plus size={18} />
-                    Add Mass Entry
-                  </button>
-                  <button
-                    onClick={() => setShowClearConfirm(true)}
-                    className="py-3 px-4 flex items-center justify-center gap-2 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-200 border-dashed group relative"
-                    title="Clear All Masses"
-                  >
-                    <Trash2 size={18} />
-                    {/* Confirmation Popup */}
-                    {showClearConfirm && (
-                      <div className="absolute bottom-full right-0 mb-2 w-64 bg-white p-4 rounded-xl shadow-xl border border-slate-200 z-50 animate-in fade-in slide-in-from-bottom-2">
-                        <p className="text-slate-800 text-sm font-medium mb-3 text-left">Clear all mass entries and reset to one empty row?</p>
-                        <div className="flex gap-2">
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setShowClearConfirm(false);
-                            }}
-                            className="flex-1 px-3 py-1.5 text-xs font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg text-center cursor-pointer transition-colors"
-                          >
-                            Cancel
-                          </span>
-                          <span
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              clearAllMasses();
-                            }}
-                            className="flex-1 px-3 py-1.5 text-xs font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg text-center cursor-pointer transition-colors"
-                          >
-                            Clear All
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </button>
-                  {showClearConfirm && (
-                    <div className="fixed inset-0 z-40" onClick={() => setShowClearConfirm(false)}></div>
-                  )}
-                </div>
-
-                <div className="p-4 bg-blue-50/50 rounded-xl border border-blue-100">
-                  <h3 className="text-sm font-medium text-blue-900 mb-3">Balancing Mass Configuration</h3>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs text-blue-700 mb-1 flex items-center">
-                        Placement Radius ({lengthUnit})
-                        <InfoTooltip text="Radial distance where the final balancing mass will be attached to counteract the unbalance." />
-                      </label>
-                      <input 
-                        type="number" 
-                        value={balRadius}
-                        onChange={(e) => setBalRadius(e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
-                          !isValidNumber(balRadius) || parseFloat(balRadius) <= 0
-                            ? 'bg-red-50 border-red-300 focus:ring-red-500 text-red-900'
-                            : 'bg-white border-blue-200 focus:ring-blue-500'
-                        }`}
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs text-blue-700 mb-1 flex items-center">
-                        Angle Tolerance (±°)
-                        <InfoTooltip text="Acceptable angular deviation for the balancing mass placement. Used to calculate the green tolerance zone." />
-                      </label>
-                      <input 
-                        type="number" 
-                        value={angleTolerance}
-                        onChange={(e) => setAngleTolerance(e.target.value)}
-                        className={`w-full px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
-                          !isValidNumber(angleTolerance) || parseFloat(angleTolerance) < 0
-                            ? 'bg-red-50 border-red-300 focus:ring-red-500 text-red-900'
-                            : 'bg-white border-blue-200 focus:ring-blue-500'
-                        }`}
-                      />
-                    </div>
-                    <div className="col-span-2 pt-2 border-t border-blue-100 flex flex-col gap-3">
-                      <label className="flex items-center gap-2 cursor-pointer group">
-                        <div className={`w-10 h-5 flex items-center rounded-full p-1 transition-colors duration-300 ${showSensitivityAnalysis ? 'bg-blue-600' : 'bg-slate-300'}`}>
-                          <div className={`bg-white w-3 h-3 rounded-full shadow-md transform transition-transform duration-300 ${showSensitivityAnalysis ? 'translate-x-5' : ''}`}></div>
-                        </div>
-                        <input 
-                          type="checkbox" 
-                          className="hidden" 
-                          checked={showSensitivityAnalysis} 
-                          onChange={() => setShowSensitivityAnalysis(!showSensitivityAnalysis)} 
-                        />
-                        <span className="text-sm text-blue-900 font-medium group-hover:text-blue-700 transition-colors">
-                          Sensitivity Analysis <span className="text-xs text-blue-600 font-normal ml-1">(Simulate ±5% Error)</span>
-                        </span>
-                      </label>
-                      <label className="flex items-center gap-2 cursor-pointer group">
-                        <div className={`w-10 h-5 flex items-center rounded-full p-1 transition-colors duration-300 ${enableCentrifugal ? 'bg-blue-600' : 'bg-slate-300'}`}>
-                          <div className={`bg-white w-3 h-3 rounded-full shadow-md transform transition-transform duration-300 ${enableCentrifugal ? 'translate-x-5' : ''}`}></div>
-                        </div>
-                        <input 
-                          type="checkbox" 
-                          className="hidden" 
-                          checked={enableCentrifugal} 
-                          onChange={() => setEnableCentrifugal(!enableCentrifugal)} 
-                        />
-                        <span className="text-sm text-blue-900 font-medium group-hover:text-blue-700 transition-colors">
-                          Calculate Centrifugal Force <span className="text-xs text-blue-600 font-normal ml-1">(Physical Model)</span>
-                        </span>
-                      </label>
-                      
-                      {enableCentrifugal && (
-                        <div className="animate-in fade-in slide-in-from-top-2 duration-300 pl-12 mt-1">
-                          <label className="block text-xs text-blue-700 mb-1">Rotor Speed (RPM)</label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <div>
+                          <label htmlFor={`mass-magnitude-${m.id}`} className="text-xs text-slate-700 mb-1 flex items-center font-semibold">
+                            Mass ({massUnit})
+                            <InfoTooltip text="Magnitude of the rotating mass (m) causing centrifugal force." />
+                          </label>
                           <input 
+                            id={`mass-magnitude-${m.id}`}
                             type="number" 
-                            value={rpm}
-                            onChange={(e) => setRpm(e.target.value)}
-                            placeholder="e.g. 1500"
-                            className={`w-1/2 px-3 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 ${
-                              !isValidNumber(rpm) || parseFloat(rpm) < 0
-                                ? 'bg-red-50 border-red-300 focus:ring-red-500 text-red-900'
-                                : 'bg-white border-blue-200 focus:ring-blue-500'
+                            step="any"
+                            aria-label={`Mass ${m.id} magnitude in ${massUnit}`}
+                            placeholder="e.g. 5"
+                            value={m.mass}
+                            onChange={(e) => updateMass(m.id, 'mass', e.target.value)}
+                            className={`w-full px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 font-mono tabular-nums ${
+                              !isValidNumber(m.mass) 
+                                ? 'bg-red-50/60 border-red-300 focus:ring-red-500' 
+                                : 'bg-white border-slate-200 focus:ring-blue-500 focus:border-blue-500'
                             }`}
                           />
                         </div>
-                      )}
+                        <div>
+                          <label htmlFor={`mass-radius-${m.id}`} className="text-xs text-slate-700 mb-1 flex items-center font-semibold">
+                            Radius ({lengthUnit})
+                            <InfoTooltip text="Distance (r) from the axis of rotation to the mass center." />
+                          </label>
+                          <input 
+                            id={`mass-radius-${m.id}`}
+                            type="number" 
+                            step="any"
+                            aria-label={`Mass ${m.id} radius in ${lengthUnit}`}
+                            placeholder="e.g. 0.2"
+                            value={m.radius}
+                            onChange={(e) => updateMass(m.id, 'radius', e.target.value)}
+                            className={`w-full px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 font-mono tabular-nums ${
+                              !isValidNumber(m.radius) 
+                                ? 'bg-red-50/60 border-red-300 focus:ring-red-500' 
+                                : 'bg-white border-slate-200 focus:ring-blue-500 focus:border-blue-500'
+                            }`}
+                          />
+                        </div>
+                        <div className="col-span-2 sm:col-span-1">
+                          <label htmlFor={`mass-angle-${m.id}`} className="text-xs text-slate-700 mb-1 flex items-center font-semibold">
+                            Angle (θ°)
+                            <InfoTooltip text="Angular position (θ) of the mass relative to the reference axis (0°)." />
+                          </label>
+                          <input 
+                            id={`mass-angle-${m.id}`}
+                            type="number" 
+                            step="any"
+                            aria-label={`Mass ${m.id} angle in degrees`}
+                            placeholder="e.g. 45"
+                            value={m.angle}
+                            onChange={(e) => updateMass(m.id, 'angle', e.target.value)}
+                            className={`w-full px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 font-mono tabular-nums ${
+                              !isValidNumber(m.angle) 
+                                ? 'bg-red-50/60 border-red-300 focus:ring-red-500' 
+                                : 'bg-white border-slate-200 focus:ring-blue-500 focus:border-blue-500'
+                            }`}
+                          />
+                        </div>
+                      </div>
                     </div>
+                  );
+                  })}
+                </div>
+
+                {/* Form Toolbar Buttons */}
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={addMass}
+                    className="flex-1 min-w-[130px] py-2.5 px-4 flex items-center justify-center gap-2 text-xs sm:text-sm font-semibold text-blue-700 bg-blue-50/80 hover:bg-blue-100 rounded-xl transition-colors border border-blue-200"
+                  >
+                    <Plus size={16} />
+                    <span>Add Mass Entry</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="py-2.5 px-3.5 flex items-center justify-center gap-1.5 text-xs sm:text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors border border-slate-200"
+                    title="Upload a CSV file containing columns for 'mass', 'radius', and 'angle'"
+                  >
+                    <Upload size={15} className="text-blue-600" />
+                    <span>Upload CSV</span>
+                  </button>
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setShowClearConfirm(true)}
+                      className="py-2.5 px-3 flex items-center justify-center text-xs font-semibold text-red-600 bg-red-50 hover:bg-red-100 rounded-xl transition-colors border border-red-200"
+                      title="Clear All Masses"
+                      aria-label="Clear all mass entries"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                    {showClearConfirm && (
+                      <div className="absolute bottom-full right-0 mb-2 w-64 bg-white p-4 rounded-xl shadow-xl border border-slate-200 z-50">
+                        <p className="text-slate-800 text-xs font-semibold mb-3 text-left">Clear all mass entries and reset to one row?</p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setShowClearConfirm(false)}
+                            className="flex-1 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg text-center transition-colors"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              clearAllMasses();
+                              setShowClearConfirm(false);
+                            }}
+                            className="flex-1 px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-lg text-center transition-colors"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
+                </div>
+              </div>
+
+              {/* Group 2: Counter-Balance & Dynamic Parameters */}
+              <div className="pt-5 border-t border-slate-200 space-y-4">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-600">
+                  2. Counter-Balance & Dynamic Parameters
+                </h3>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="bal-radius-input" className="text-xs text-slate-700 font-semibold mb-1 flex items-center">
+                      Placement Radius ({lengthUnit})
+                      <InfoTooltip text="Radial distance where the final balancing mass will be attached to counteract the unbalance." />
+                    </label>
+                    <input 
+                      id="bal-radius-input"
+                      type="number" 
+                      step="any"
+                      aria-label={`Placement radius in ${lengthUnit}`}
+                      placeholder="e.g. 0.25"
+                      value={balRadius}
+                      onChange={(e) => setBalRadius(e.target.value)}
+                      className={`w-full px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 font-mono tabular-nums ${
+                        !isValidNumber(balRadius) || parseFloat(balRadius) <= 0
+                          ? 'bg-red-50/60 border-red-300 focus:ring-red-500 text-red-900'
+                          : 'bg-white border-slate-200 focus:ring-blue-500 focus:border-blue-500'
+                      }`}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="bal-angle-tolerance-input" className="text-xs text-slate-700 font-semibold mb-1 flex items-center">
+                      Angle Tolerance (±°)
+                      <InfoTooltip text="Acceptable angular deviation for the balancing mass placement. Used to render the green tolerance sector." />
+                    </label>
+                    <input 
+                      id="bal-angle-tolerance-input"
+                      type="number" 
+                      step="any"
+                      aria-label="Balancing angle tolerance in degrees"
+                      placeholder="e.g. 5"
+                      value={angleTolerance}
+                      onChange={(e) => setAngleTolerance(e.target.value)}
+                      className={`w-full px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 font-mono tabular-nums ${
+                        !isValidNumber(angleTolerance) || parseFloat(angleTolerance) < 0
+                          ? 'bg-red-50/60 border-red-300 focus:ring-red-500 text-red-900'
+                          : 'bg-white border-slate-200 focus:ring-blue-500 focus:border-blue-500'
+                      }`}
+                    />
+                  </div>
+                </div>
+
+                {/* Additional Toggles */}
+                <div className="space-y-2.5 pt-2">
+                  <label className="flex items-center gap-3 cursor-pointer group select-none p-2 rounded-lg hover:bg-slate-50 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      aria-label="Toggle sensitivity analysis simulate ±5% error"
+                      checked={showSensitivityAnalysis} 
+                      onChange={() => setShowSensitivityAnalysis(!showSensitivityAnalysis)} 
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-slate-800">
+                        Sensitivity Analysis Simulation
+                      </span>
+                      <span className="text-[11px] text-slate-600">
+                        Simulate ±5% manufacturing deviations on unbalance vectors
+                      </span>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 cursor-pointer group select-none p-2 rounded-lg hover:bg-slate-50 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      aria-label="Toggle centrifugal force calculation"
+                      checked={enableCentrifugal} 
+                      onChange={() => setEnableCentrifugal(!enableCentrifugal)} 
+                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div className="flex flex-col">
+                      <span className="text-xs font-bold text-slate-800">
+                        Centrifugal Dynamic Force (N)
+                      </span>
+                      <span className="text-[11px] text-slate-600">
+                        Compute physical force F = m·r·ω² at operating speed
+                      </span>
+                    </div>
+                  </label>
+                  
+                  {enableCentrifugal && (
+                    <div className="pl-7 pt-1 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <label htmlFor="rotor-speed-rpm-input" className="block text-xs font-bold text-slate-700 mb-1">
+                        Rotor Operating Speed (RPM)
+                      </label>
+                      <input 
+                        id="rotor-speed-rpm-input"
+                        type="number" 
+                        step="any"
+                        aria-label="Rotor Speed in RPM"
+                        value={rpm}
+                        onChange={(e) => setRpm(e.target.value)}
+                        placeholder="e.g. 1500"
+                        className={`w-full sm:w-2/3 px-3 py-2 border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 font-mono tabular-nums ${
+                          !isValidNumber(rpm) || parseFloat(rpm) < 0
+                            ? 'bg-red-50 border-red-300 focus:ring-red-500 text-red-900'
+                            : 'bg-white border-slate-200 focus:ring-blue-500'
+                        }`}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </section>
 
-          {/* Results Section */}
+          {/* Results Column */}
           <section ref={resultsRef} className="lg:col-span-7 space-y-6 print:block">
             
             {calculations.hasErrors ? (
-              <div className="bg-red-50 rounded-2xl shadow-sm border border-red-200 p-8 text-center relative overflow-hidden flex flex-col items-center justify-center min-h-[400px]">
-                <Info size={48} className="text-red-400 mb-4" />
-                <h2 className="text-xl font-semibold text-red-700 mb-2">Invalid or Missing Inputs</h2>
-                <p className="text-red-600 max-w-md mx-auto">
-                  Please ensure all mass, radius, and angle fields have valid numeric values. The placement radius must be greater than zero. Highlighted fields require your attention before calculations can run.
+              <div className="bg-red-50 rounded-2xl shadow-sm border border-red-200 p-8 text-center relative overflow-hidden flex flex-col items-center justify-center min-h-[380px]">
+                <div className="w-14 h-14 rounded-2xl bg-red-100 flex items-center justify-center text-red-600 mb-4">
+                  <AlertTriangle size={28} />
+                </div>
+                <h3 className="text-lg font-bold text-red-900 mb-2">Input Parameter Attention Required</h3>
+                <p className="text-red-800 font-medium text-sm max-w-md mx-auto leading-relaxed">
+                  Please ensure each mass plane has valid positive numbers for mass, radius, and absolute angle (0°–360°), and specify a placement radius greater than zero. Highlighted fields require adjustment before calculation can execute.
                 </p>
+                <div className="mt-5 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={loadExampleCase}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-bold rounded-lg transition-colors shadow-xs"
+                  >
+                    Load Working Benchmark
+                  </button>
+                </div>
               </div>
             ) : (
               <>
-                {/* Primary Result */}
-                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-8 text-center relative overflow-hidden group">
-                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-indigo-500"></div>
-                  
-                  <div className="absolute top-4 right-4 flex items-center gap-2 print:hidden">
-                    <button
-                      onClick={downloadPDF}
-                      disabled={calculations.hasErrors}
-                      className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-all flex items-center gap-1.5 bg-slate-100 text-xs font-medium disabled:opacity-50"
-                      title="Download Formal Engineering Report (PDF)"
-                    >
-                      <Download size={14} className="text-blue-600" />
-                      <span className="hidden sm:inline">Download PDF</span>
-                    </button>
-                    <button
-                      onClick={handleCopyResults}
-                      className="p-1.5 sm:px-2.5 sm:py-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all flex items-center gap-1.5 text-xs font-medium"
-                      title="Copy Results"
-                    >
-                      {isCopied ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
-                      <span className="hidden sm:inline">{isCopied ? 'Copied' : 'Copy'}</span>
-                    </button>
+                {/* Executive Balance Status Banner */}
+                {(() => {
+                  const isCritical = calculations.resultantForce >= calculations.thresholds.unbalanceCritical;
+                  const isWarning = calculations.resultantForce >= calculations.thresholds.unbalanceWarning;
+                  const isEquilibrium = calculations.resultantForce < 0.001;
+
+                  return (
+                    <div className={`p-4 rounded-2xl border flex items-center justify-between flex-wrap gap-3 ${
+                      isCritical 
+                        ? 'bg-red-50/80 border-red-200 text-red-900'
+                        : isWarning 
+                          ? 'bg-amber-50/80 border-amber-200 text-amber-900'
+                          : 'bg-emerald-50/80 border-emerald-200 text-emerald-900'
+                    }`}>
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${
+                          isCritical ? 'bg-red-600 text-white' : isWarning ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'
+                        }`}>
+                          {isCritical ? <AlertTriangle size={18} /> : isWarning ? <AlertTriangle size={18} /> : <ShieldCheck size={20} />}
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold tracking-wider uppercase">
+                            {isCritical ? 'Critical Unbalance Level' : isWarning ? 'Elevated Unbalance Warning' : 'Dynamic Equilibrium'}
+                          </p>
+                          <p className="text-xs opacity-90">
+                            {isCritical 
+                              ? 'Counter-balance correction is required to prevent severe bearing vibration.'
+                              : isWarning 
+                                ? 'Unbalance exceeds recommended thresholds. Counter-balancing mass advised.'
+                                : 'Resultant unbalance is within acceptable operating tolerances.'
+                            }
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={downloadPDF}
+                          disabled={calculations.hasErrors}
+                          className="px-3 py-1.5 rounded-lg bg-white/80 hover:bg-white text-slate-800 text-xs font-bold shadow-2xs border border-slate-200/80 transition-colors flex items-center gap-1.5"
+                          title="Download ISO-compliant PDF engineering report"
+                        >
+                          <Download size={13} className="text-blue-600" />
+                          <span>PDF Spec</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCopyResults}
+                          className="px-3 py-1.5 rounded-lg bg-white/80 hover:bg-white text-slate-800 text-xs font-bold shadow-2xs border border-slate-200/80 transition-colors flex items-center gap-1.5"
+                          title="Copy balancing mass and angle to clipboard"
+                        >
+                          {isCopied ? <Check size={13} className="text-emerald-600" /> : <Copy size={13} />}
+                          <span>{isCopied ? 'Copied' : 'Copy'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* 3 Prominent Result Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {/* Card 1: Resultant Unbalance */}
+                  <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs relative overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-500 to-amber-500"></div>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">Resultant Unbalance (R)</p>
+                      <div className="flex items-baseline gap-1.5 my-2">
+                        <span className="text-3xl sm:text-4xl font-extrabold text-slate-900 font-mono tabular-nums tracking-tight">
+                          {formatNum(calculations.resultantForce)}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-600">{massUnit}·{lengthUnit}</span>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-slate-100 text-[11px] font-mono text-slate-600 flex justify-between">
+                      <span>ΣH: {formatNum(calculations.sumH)}</span>
+                      <span>ΣV: {formatNum(calculations.sumV)}</span>
+                    </div>
                   </div>
 
-                  <h2 className="text-sm font-semibold text-slate-500 tracking-wide uppercase mb-8">Solution</h2>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-8 divide-y md:divide-y-0 md:divide-x divide-slate-100">
-                    <div className="pt-4 md:pt-0">
-                      <p className="text-sm text-slate-500 mb-2">Resultant Unbalance</p>
-                      <p className={`text-4xl md:text-5xl font-bold transition-colors ${calculations.resultantForce >= calculations.thresholds.unbalanceCritical ? 'text-red-500' : calculations.resultantForce >= calculations.thresholds.unbalanceWarning ? 'text-amber-500' : 'text-slate-900'}`}>
-                        {formatNum(calculations.resultantForce)} <span className="text-xl text-slate-500 font-medium">{massUnit}·{lengthUnit}</span>
-                      </p>
+                  {/* Card 2: Required Balancing Mass */}
+                  <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs relative overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-blue-500 to-indigo-600"></div>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-blue-700 mb-1">Required Balancing Mass (m_b)</p>
+                      <div className="flex items-baseline gap-1.5 my-2">
+                        <span className="text-3xl sm:text-4xl font-extrabold text-blue-700 font-mono tabular-nums tracking-tight">
+                          {formatNum(calculations.balancingMass)}
+                        </span>
+                        <span className="text-xs font-semibold text-slate-600">{massUnit}</span>
+                      </div>
                     </div>
-                    <div className="pt-8 md:pt-0">
-                      <p className="text-sm text-slate-500 mb-2">Required Balancing Mass</p>
-                      <p className={`text-4xl md:text-5xl font-bold transition-colors ${calculations.balancingMass >= calculations.thresholds.massCritical ? 'text-red-500' : calculations.balancingMass >= calculations.thresholds.massWarning ? 'text-amber-500' : 'text-slate-900'}`}>
-                        {formatNum(calculations.balancingMass)} <span className="text-xl text-slate-500 font-medium">{massUnit}</span>
-                      </p>
+                    <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-600">
+                      Mounting radius: <span className="font-mono font-semibold text-slate-800">{balRadius || '0'} {lengthUnit}</span>
                     </div>
-                    <div className="pt-8 md:pt-0">
-                      <p className="text-sm text-slate-500 mb-2">Mounting Angle</p>
-                      <p className="text-4xl md:text-5xl font-bold text-slate-900">
-                        {formatNum(calculations.balancingAngleDeg)}<span className="text-xl text-slate-500 font-medium">°</span>
-                      </p>
+                  </div>
+
+                  {/* Card 3: Mounting Angle */}
+                  <div className="bg-white rounded-2xl p-5 border border-slate-200/80 shadow-xs relative overflow-hidden flex flex-col justify-between">
+                    <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-emerald-500 to-teal-500"></div>
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-slate-600 mb-1">Mounting Angle (θ_b)</p>
+                      <div className="flex items-baseline gap-1 my-2">
+                        <span className="text-3xl sm:text-4xl font-extrabold text-slate-900 font-mono tabular-nums tracking-tight">
+                          {formatNum(calculations.balancingAngleDeg)}
+                        </span>
+                        <span className="text-2xl font-bold text-slate-600">°</span>
+                      </div>
+                    </div>
+                    <div className="pt-2 border-t border-slate-100 text-[11px] text-slate-600 flex justify-between">
+                      <span>Opposite unbalance (+180°)</span>
+                      <span className="font-mono text-slate-700">α = {formatNum(calculations.resultantAngleDeg)}°</span>
                     </div>
                   </div>
                 </div>
@@ -1856,26 +2637,60 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
 
             {/* Unbalance Force Contribution Chart */}
             <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print:break-inside-avoid print:mt-6">
-              <div className="p-6 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+              <div className="p-6 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
                 <div className="flex items-center gap-2">
                   <Calculator size={20} className="text-slate-500" />
                   <h2 className="text-lg font-semibold">Unbalance Force Contributions</h2>
                 </div>
-                <span className="text-xs text-slate-500 font-medium px-2.5 py-1 bg-slate-100 rounded-full">
-                  Unit: {massUnit}·{lengthUnit}
-                </span>
+                <div className="flex items-center flex-wrap gap-2">
+                  {lockedMassId !== null && (
+                    <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs px-2.5 py-1 rounded-full shadow-xs animate-in fade-in duration-200">
+                      <Pin size={12} className="text-blue-600 fill-blue-600" />
+                      <span className="font-semibold">Mass {lockedMassId} Locked</span>
+                      <button
+                        type="button"
+                        onClick={handleClearFocus}
+                        className="ml-1 p-0.5 hover:bg-blue-200/60 rounded-full transition-colors"
+                        title="Clear locked focus"
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  )}
+                  {hoveredMassId !== null && hoveredMassId !== lockedMassId && (
+                    <span className="text-[11px] bg-amber-50 border border-amber-200 text-amber-700 px-2 py-0.5 rounded-full font-medium animate-in fade-in duration-150">
+                      Previewing Mass {hoveredMassId}
+                    </span>
+                  )}
+                  <span className="text-xs text-slate-500 font-medium px-2.5 py-1 bg-slate-100 rounded-full">
+                    Unit: {massUnit}·{lengthUnit}
+                  </span>
+                </div>
               </div>
               <div className="p-6">
-                <p className="text-sm text-slate-600 mb-6">
-                  This chart compares the individual unbalance force contribution (mass × radius) of each plane.
-                  The higher the value, the more that specific mass contributes to the total system unbalance.
-                </p>
+                <div className="flex items-center justify-between mb-4">
+                  <p className="text-sm text-slate-600">
+                    This chart compares the individual unbalance force contribution (mass × radius) of each plane.
+                    Click a bar to lock focus onto that mass in the vector diagram.
+                  </p>
+                  {lockedMassId !== null && (
+                    <button
+                      type="button"
+                      onClick={handleClearFocus}
+                      className="text-xs text-blue-600 hover:text-blue-800 font-medium underline flex-shrink-0 ml-3"
+                    >
+                      Clear Focus
+                    </button>
+                  )}
+                </div>
                 <div className="h-[280px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
                       data={calculations.steps.map((step) => ({
+                        id: step.id,
                         name: `Mass ${step.id}`,
-                        force: formatNum(step.force || 0),
+                        force: Number((step.force || 0).toFixed(4)),
+                        formattedForce: formatNum(step.force || 0),
                         rawForce: step.force || 0,
                       }))}
                       margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
@@ -1897,23 +2712,58 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                         content={({ active, payload }) => {
                           if (active && payload && payload.length) {
                             const data = payload[0].payload;
+                            const isThisLocked = lockedMassId === data.id;
                             return (
                               <div className="bg-slate-900 text-white p-3 rounded-lg shadow-md border border-slate-800 text-xs font-sans">
-                                <p className="font-semibold mb-1 text-slate-200">{data.name}</p>
-                                <p>Unbalance Force: <span className="font-bold text-blue-400">{data.force}</span> {massUnit}·{lengthUnit}</p>
+                                <div className="flex items-center justify-between gap-3 mb-1">
+                                  <p className="font-semibold text-slate-200">{data.name}</p>
+                                  {isThisLocked && (
+                                    <span className="text-[10px] bg-blue-500/30 text-blue-300 border border-blue-400/40 px-1.5 py-0.5 rounded font-medium">
+                                      Locked
+                                    </span>
+                                  )}
+                                </div>
+                                <p>Unbalance Force: <span className="font-bold text-blue-400">{data.formattedForce || data.force}</span> {massUnit}·{lengthUnit}</p>
+                                <p className="text-[10px] text-slate-400 mt-1 italic">
+                                  {isThisLocked ? 'Click bar again to unlock' : 'Click bar to lock focus in diagram'}
+                                </p>
                               </div>
                             );
                           }
                           return null;
                         }}
                       />
-                      <Bar dataKey="force" radius={[6, 6, 0, 0]} maxBarSize={50}>
-                        {calculations.steps.map((step, index) => (
-                          <Cell 
-                            key={`cell-${index}`} 
-                            fill={(step.color || colors[index % colors.length])} 
-                          />
-                        ))}
+                      <Bar 
+                        dataKey="force" 
+                        radius={[6, 6, 0, 0]} 
+                        maxBarSize={50}
+                        isAnimationActive={true}
+                        animationDuration={600}
+                        animationEasing="ease-out"
+                        animationBegin={0}
+                      >
+                        {calculations.steps.map((step, index) => {
+                          const baseColor = (step.color || colors[index % colors.length]);
+                          const isFocused = activeFocusId === step.id;
+                          const isLocked = lockedMassId === step.id;
+                          const isAnyFocused = activeFocusId !== null;
+                          const opacity = isAnyFocused ? (isFocused ? 1 : 0.28) : 1;
+
+                          return (
+                            <Cell 
+                              key={`cell-${step.id}`} 
+                              fill={baseColor}
+                              fillOpacity={opacity}
+                              stroke={isLocked ? '#1d4ed8' : isFocused ? baseColor : 'none'}
+                              strokeWidth={isLocked ? 3 : isFocused ? 2 : 0}
+                              strokeDasharray={isLocked ? '4,2' : undefined}
+                              className="cursor-pointer transition-all duration-300 ease-out"
+                              onClick={() => handleMassClick(step.id)}
+                              onMouseEnter={() => handleMassHover(step.id)}
+                              onMouseLeave={() => handleMassHover(null)}
+                            />
+                          );
+                        })}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
@@ -1984,6 +2834,22 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                     <h2 className="text-lg font-semibold">Force Vector Diagram</h2>
                   </div>
                   <div className="flex items-center flex-wrap gap-2 print:hidden">
+                    {/* Locked mass banner indicator if active */}
+                    {lockedMassId !== null && (
+                      <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs px-2.5 py-1 rounded-full shadow-xs animate-in fade-in duration-200">
+                        <Pin size={11} className="text-blue-600 fill-blue-600" />
+                        <span className="font-semibold">m{lockedMassId} Locked</span>
+                        <button
+                          type="button"
+                          onClick={handleClearFocus}
+                          className="hover:bg-blue-200/60 rounded-full p-0.5 transition-colors"
+                          title="Clear locked focus"
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    )}
+
                     {/* Vector Display Mode Segmented Control */}
                     <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs shadow-xs">
                       <button
@@ -2073,6 +2939,10 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                     showResultant={vecShowResultant}
                     displayMode={vecDisplayMode}
                     showProjections={vecShowProjections}
+                    activeFocusId={activeFocusId}
+                    lockedMassId={lockedMassId}
+                    onMassClick={handleMassClick}
+                    onMassHover={handleMassHover}
                     onVectorChange={handleVectorChange}
                     isSimulating={isSimulating}
                     sensitivityPoints={calculations.sensitivityPoints}
@@ -2083,12 +2953,26 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
 
               {/* Space Diagram Section */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden print:break-inside-avoid print:mt-6">
-                <div className="p-6 border-b border-slate-200 flex items-center justify-between bg-slate-50/50">
+                <div className="p-6 border-b border-slate-200 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50">
                   <div className="flex items-center gap-2">
                     <Compass size={20} className="text-slate-500" />
                     <h2 className="text-lg font-semibold">Space Diagram (Physical Layout)</h2>
                   </div>
-                  <div className="flex items-center gap-2 print:hidden">
+                  <div className="flex items-center flex-wrap gap-2 print:hidden">
+                    {lockedMassId !== null && (
+                      <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs px-2.5 py-1 rounded-full shadow-xs animate-in fade-in duration-200">
+                        <Pin size={11} className="text-blue-600 fill-blue-600" />
+                        <span className="font-semibold">m{lockedMassId} Locked</span>
+                        <button
+                          type="button"
+                          onClick={handleClearFocus}
+                          className="hover:bg-blue-200/60 rounded-full p-0.5 transition-colors"
+                          title="Clear locked focus"
+                        >
+                          <X size={11} />
+                        </button>
+                      </div>
+                    )}
                     <button
                       onClick={() => setIsSimulating(!isSimulating)}
                       title={isSimulating ? "Pause dynamic rotation" : "Simulate dynamic rotor rotation"}
@@ -2126,6 +3010,10 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                   showBalancingMass={spaShowBalancingMass}
                   showToleranceCone={spaShowToleranceCone}
                   showAngularGrid={spaShowAngularGrid}
+                  activeFocusId={activeFocusId}
+                  lockedMassId={lockedMassId}
+                  onMassClick={handleMassClick}
+                  onMassHover={handleMassHover}
                 />
               </div>
             </div>
@@ -2202,6 +3090,10 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                       showResultant={vecShowResultant}
                       displayMode={vecDisplayMode}
                       showProjections={vecShowProjections}
+                      activeFocusId={activeFocusId}
+                      lockedMassId={lockedMassId}
+                      onMassClick={handleMassClick}
+                      onMassHover={handleMassHover}
                       onVectorChange={handleVectorChange}
                       isSimulating={isSimulating}
                       sensitivityPoints={calculations.sensitivityPoints}
@@ -2224,6 +3116,10 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                       showBalancingMass={spaShowBalancingMass}
                       showToleranceCone={spaShowToleranceCone}
                       showAngularGrid={spaShowAngularGrid}
+                      activeFocusId={activeFocusId}
+                      lockedMassId={lockedMassId}
+                      onMassClick={handleMassClick}
+                      onMassHover={handleMassHover}
                     />
                   )}
                 </div>
@@ -2236,6 +3132,26 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                     <Settings2 size={16} className="text-slate-500" />
                     Preview Controls
                   </h4>
+
+                  {/* Active Mass Focus Card (if a mass is locked) */}
+                  {lockedMassId !== null && (
+                    <div className="mb-4 p-3.5 bg-blue-50/80 border border-blue-200 rounded-xl shadow-xs flex items-center justify-between animate-in fade-in">
+                      <div className="flex items-center gap-2">
+                        <Pin size={14} className="text-blue-600 fill-blue-600" />
+                        <div>
+                          <p className="text-xs font-bold text-blue-900">Mass {lockedMassId} Focused</p>
+                          <p className="text-[11px] text-blue-600">Locked in visual preview</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleClearFocus}
+                        className="px-2 py-1 bg-white hover:bg-blue-100 text-blue-700 text-xs font-medium rounded-lg border border-blue-200 shadow-xs transition-colors"
+                      >
+                        Clear Focus
+                      </button>
+                    </div>
+                  )}
 
                   {/* Playback Simulation group */}
                   <div className="mb-4 p-4 bg-white rounded-xl border border-slate-100 shadow-sm space-y-3">
@@ -2312,9 +3228,11 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                         </button>
                       </div>
 
-                      <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none pt-1">
+                      <label htmlFor="chk-vec-projections" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none pt-1">
                         <input 
+                          id="chk-vec-projections"
                           type="checkbox" 
+                          aria-label="Show horizontal and vertical dashed projections"
                           checked={vecShowProjections}
                           onChange={(e) => setVecShowProjections(e.target.checked)}
                           className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
@@ -2330,36 +3248,44 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                     
                     {activePreviewModal === 'vector' ? (
                       <div className="space-y-2">
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-vec-axes" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-vec-axes"
                             type="checkbox" 
+                            aria-label="Show coordinate axis grid"
                             checked={vecShowAxes}
                             onChange={(e) => setVecShowAxes(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
                           />
                           Coordinate Axis Grid
                         </label>
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-vec-forces" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-vec-forces"
                             type="checkbox" 
+                            aria-label="Show force vector labels"
                             checked={vecShowForces}
                             onChange={(e) => setVecShowForces(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
                           />
                           Force Vector Labels
                         </label>
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-vec-polygon" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-vec-polygon"
                             type="checkbox" 
+                            aria-label="Show force polygon chain"
                             checked={vecShowPolygon}
                             onChange={(e) => setVecShowPolygon(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
                           />
                           Force Polygon Chain
                         </label>
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-vec-resultant" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-vec-resultant"
                             type="checkbox" 
+                            aria-label="Show resultant vector R"
                             checked={vecShowResultant}
                             onChange={(e) => setVecShowResultant(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
@@ -2369,45 +3295,55 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-spa-axes" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-spa-axes"
                             type="checkbox" 
+                            aria-label="Show standard XY axes"
                             checked={spaShowAxes}
                             onChange={(e) => setSpaShowAxes(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
                           />
                           Standard XY Axes
                         </label>
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-spa-radial-grid" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-spa-radial-grid"
                             type="checkbox" 
+                            aria-label="Show concentric angular radar grid"
                             checked={spaShowAngularGrid}
                             onChange={(e) => setSpaShowAngularGrid(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
                           />
                           Concentric Angular Radar Grid
                         </label>
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-spa-mass-planes" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-spa-mass-planes"
                             type="checkbox" 
+                            aria-label="Show individual mass planes"
                             checked={spaShowIndividualMasses}
                             onChange={(e) => setSpaShowIndividualMasses(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
                           />
                           Individual Mass Planes
                         </label>
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-spa-balancing-plane" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-spa-balancing-plane"
                             type="checkbox" 
+                            aria-label="Show balancing mass plane"
                             checked={spaShowBalancingMass}
                             onChange={(e) => setSpaShowBalancingMass(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
                           />
                           Balancing Mass plane (m_b)
                         </label>
-                        <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
+                        <label htmlFor="chk-spa-tolerance" className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                           <input 
+                            id="chk-spa-tolerance"
                             type="checkbox" 
+                            aria-label="Show tolerance arc highlight"
                             checked={spaShowToleranceCone}
                             onChange={(e) => setSpaShowToleranceCone(e.target.checked)}
                             className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" 
@@ -2436,6 +3372,14 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
           </motion.div>
         </div>
       )}
+
+      {/* Unit Conversion & Balancing Quick-Reference Guide Modal */}
+      <UnitConversionHelpModal 
+        isOpen={showHelpModal} 
+        onClose={() => setShowHelpModal(false)}
+        currentMassUnit={massUnit}
+        currentLengthUnit={lengthUnit}
+      />
     </div>
   );
 }

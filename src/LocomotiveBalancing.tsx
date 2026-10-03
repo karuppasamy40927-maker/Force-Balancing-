@@ -1,6 +1,7 @@
 import React, { useState, useMemo } from 'react';
-import { Calculator, Settings, Layers, Box, TrendingUp, Anchor, HelpCircle, Download, Printer } from 'lucide-react';
+import { Calculator, Settings, Layers, Box, TrendingUp, Anchor, HelpCircle, Download, Printer, RotateCcw, Activity } from 'lucide-react';
 import { generateLocomotiveReport } from './generateLocomotiveReport';
+import UnitConversionHelpModal from './UnitConversionHelpModal';
 
 const InfoTooltip = ({ text }: { text: string }) => (
   <div className="group relative inline-flex items-center ml-1 align-middle">
@@ -133,6 +134,7 @@ export default function LocomotiveBalancing() {
   const [c_frac, setC_frac] = useState<number | ''>('');
   const [phi, setPhi] = useState<number | ''>('');
   const [r_b, setR_b] = useState<number | ''>('');
+  const [showHelpModal, setShowHelpModal] = useState(false);
 
   const calc = useMemo(() => {
     const wVal = Number(W) || 0;
@@ -239,86 +241,95 @@ export default function LocomotiveBalancing() {
               <Settings size={18} className="text-blue-600" />
               Locomotive Parameters
             </h2>
+            <button
+              type="button"
+              onClick={() => setShowHelpModal(true)}
+              className="flex items-center gap-1.5 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200/80 px-2.5 py-1.5 rounded-lg transition-colors shadow-2xs"
+              title="Open Unit Conversion & Reference Guide"
+            >
+              <HelpCircle size={13} className="text-blue-600" />
+              <span>Unit Guide & Help</span>
+            </button>
           </div>
           <div className="p-6 space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-w-dist" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Wheels Dist (W)
                   <InfoTooltip text="Distance between the two driving wheels (Plane A and Plane D). Used to calculate moments." />
                 </label>
                 <div className="relative">
-                  <input type="number" value={W === '' ? '' : W} onChange={e => setW(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">m</span>
+                  <input id="loco-w-dist" aria-label="Distance between driving wheels W in meters" type="number" value={W === '' ? '' : W} onChange={e => setW(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">m</span>
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-c-dist" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Cylinders Dist (C)
                   <InfoTooltip text="Distance between the two cylinders (Plane B and Plane C) where the driving force is applied." />
                 </label>
                 <div className="relative">
-                  <input type="number" value={C === '' ? '' : C} onChange={e => setC(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">m</span>
+                  <input id="loco-c-dist" aria-label="Distance between cylinders C in meters" type="number" value={C === '' ? '' : C} onChange={e => setC(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">m</span>
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-l-dist" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Stroke Length (L)
                   <InfoTooltip text="Total stroke length of the piston. The crank radius (r) is half of this value." />
                 </label>
                 <div className="relative">
-                  <input type="number" value={L === '' ? '' : L} onChange={e => setL(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">m</span>
+                  <input id="loco-l-dist" aria-label="Stroke length L in meters" type="number" value={L === '' ? '' : L} onChange={e => setL(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">m</span>
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-phi-angle" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Crank Angle Diff (φ)
                   <InfoTooltip text="Angle between the two cranks. Typically 90° for a standard 2-cylinder locomotive." />
                 </label>
                 <div className="relative">
-                  <input type="number" value={phi === '' ? '' : phi} onChange={e => setPhi(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">°</span>
+                  <input id="loco-phi-angle" aria-label="Crank angle difference phi in degrees" type="number" value={phi === '' ? '' : phi} onChange={e => setPhi(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">°</span>
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-mro-mass" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Rotating Mass / Cyl
                   <InfoTooltip text="Mass of the rotating parts per cylinder (e.g., crankpin) that needs full balancing." />
                 </label>
                 <div className="relative">
-                  <input type="number" value={m_ro === '' ? '' : m_ro} onChange={e => setM_ro(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">kg</span>
+                  <input id="loco-mro-mass" aria-label="Rotating mass per cylinder in kilograms" type="number" value={m_ro === '' ? '' : m_ro} onChange={e => setM_ro(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">kg</span>
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-mre-mass" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Reciprocating Mass / Cyl
                   <InfoTooltip text="Mass of the reciprocating parts per cylinder (e.g., piston, crosshead) causing alternating forces." />
                 </label>
                 <div className="relative">
-                  <input type="number" value={m_re === '' ? '' : m_re} onChange={e => setM_re(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">kg</span>
+                  <input id="loco-mre-mass" aria-label="Reciprocating mass per cylinder in kilograms" type="number" value={m_re === '' ? '' : m_re} onChange={e => setM_re(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">kg</span>
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-cfrac-val" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Fraction Balanced (c)
                   <InfoTooltip text="Fraction (c) of reciprocating mass to balance (typically 0.5 to 0.67) to compromise between swaying couple and hammer blow." />
                 </label>
                 <div className="relative">
-                  <input type="number" step="0.01" value={c_frac === '' ? '' : c_frac} onChange={e => setC_frac(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <input id="loco-cfrac-val" aria-label="Fraction of reciprocating mass to balance" type="number" step="0.01" value={c_frac === '' ? '' : c_frac} onChange={e => setC_frac(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                <label htmlFor="loco-rb-radius" className="text-[11px] font-bold text-slate-700 uppercase tracking-wider flex items-center">
                   Balancing Radius
                   <InfoTooltip text="Radial distance from the shaft center where the balancing masses will be attached to the wheels." />
                 </label>
                 <div className="relative">
-                  <input type="number" value={r_b === '' ? '' : r_b} onChange={e => setR_b(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs font-medium">m</span>
+                  <input id="loco-rb-radius" aria-label="Balancing radius in meters" type="number" value={r_b === '' ? '' : r_b} onChange={e => setR_b(e.target.value === '' ? '' : Number(e.target.value))} placeholder="0.0" className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-xs font-medium">m</span>
                 </div>
               </div>
             </div>
@@ -463,6 +474,13 @@ export default function LocomotiveBalancing() {
 
       </div>
 
+      {/* Unit Conversion & Balancing Quick-Reference Guide Modal */}
+      <UnitConversionHelpModal 
+        isOpen={showHelpModal} 
+        onClose={() => setShowHelpModal(false)}
+        currentMassUnit="kg"
+        currentLengthUnit="m"
+      />
     </div>
   );
 }
