@@ -9,7 +9,7 @@ import {
   Calculator, ArrowRight, Settings2, Info, Compass, Plus, X, Sparkles, Loader2, RotateCcw, 
   Download, FileSpreadsheet, Maximize2, Play, Pause, Eye, EyeOff, Copy, Check, AlertTriangle, 
   Palette, HelpCircle, Trash2, Printer, Pin, Upload, ShieldCheck, Activity, Disc, ArrowDown, 
-  ChevronRight, Gauge, Layers, Scale, Ruler 
+  ChevronRight, Gauge, Layers, Scale, Ruler, ArrowUpDown, ArrowDownWideNarrow, ArrowUpNarrowWide 
 } from 'lucide-react';
 
 const InfoTooltip = ({ text }: { text: string }) => (
@@ -208,7 +208,11 @@ const VectorDiagramSVG = ({
   onVectorChange,
   isSimulating,
   sensitivityPoints = [],
-  showSensitivityAnalysis = false
+  showSensitivityAnalysis = false,
+  unitMode = 'standard',
+  massUnit = 'kg',
+  lengthUnit = 'm',
+  rpm = ''
 }: any) => {
   const svgRef = React.useRef<SVGSVGElement>(null);
   const [dragIndex, setDragIndex] = React.useState<number | null>(null);
@@ -218,15 +222,34 @@ const VectorDiagramSVG = ({
   let curX = 0;
   let curY = 0;
 
+  const rpmVal = parseFloat(rpm) || 0;
+  const omega = (2 * Math.PI * rpmVal) / 60;
+
   const rotatedSteps = steps.map((s: any) => {
     const angle = (s.absoluteAngle + rotationOffset) % 360;
     const angleRad = (angle * Math.PI) / 180;
     const h = s.force * Math.cos(angleRad);
     const v = s.force * Math.sin(angleRad);
+
+    let mKg = s.massVal || parseFloat(s.mass) || 0;
+    if (massUnit === 'lbs') mKg *= 0.45359237;
+
+    let rM = s.radiusVal || parseFloat(s.radius) || 0;
+    if (lengthUnit === 'in') rM *= 0.0254;
+    else if (lengthUnit === 'mm') rM /= 1000;
+    else if (lengthUnit === 'cm') rM /= 100;
+
+    const forceN = omega > 0 ? mKg * rM * omega * omega : (s.centrifugalForceN || 0);
+    const hN = forceN * Math.cos(angleRad);
+    const vN = forceN * Math.sin(angleRad);
+
     return {
       ...s,
       h,
-      v
+      v,
+      forceN,
+      hN,
+      vN
     };
   });
 
@@ -476,6 +499,31 @@ const VectorDiagramSVG = ({
               )}
             </motion.g>
             
+      {/* Active unit HUD overlay tag */}
+      <g opacity="0.9" pointerEvents="none" transform="translate(16, 26)">
+        <rect 
+          x="0" y="0" 
+          width={unitMode === 'newtons' ? "152" : "135"} 
+          height="22" 
+          fill={unitMode === 'newtons' ? "#78350f" : "#0f172a"} 
+          rx="6" 
+          opacity="0.85" 
+        />
+        <text x="8" y="14" fill={unitMode === 'newtons' ? "#fde68a" : "#38bdf8"} fontSize="10" fontWeight="bold" fontFamily="monospace">
+          {unitMode === 'newtons' 
+            ? `FORCE: NEWTONS (N)${rpmVal > 0 ? ` @ ${rpmVal} RPM` : ''}` 
+            : `UNBALANCE: ${massUnit}·${lengthUnit}`}
+        </text>
+      </g>
+      {unitMode === 'newtons' && rpmVal === 0 && (
+        <g pointerEvents="none" transform="translate(16, 52)">
+          <rect x="0" y="0" width="280" height="20" fill="#fef3c7" stroke="#f59e0b" strokeWidth="1" rx="4" />
+          <text x="8" y="13" fill="#92400e" fontSize="9.5" fontWeight="600">
+            ⚠️ Specify RPM in parameters to view non-zero force in N
+          </text>
+        </g>
+      )}
+
             {/* Vector force value / component label badge */}
             {showForces && (
               <motion.g
@@ -486,9 +534,9 @@ const VectorDiagramSVG = ({
                 {displayMode === 'magnitude' ? (
                   <>
                     <rect 
-                      x={valid((x1 + x2) / 2 - (isFocused ? 23 : 20))} 
+                      x={valid((x1 + x2) / 2 - (isFocused ? (unitMode === 'newtons' ? 32 : 23) : (unitMode === 'newtons' ? 28 : 20)))} 
                       y={valid((y1 + y2) / 2 - (isFocused ? 13 : 11))} 
-                      width={isFocused ? "46" : "40"} 
+                      width={isFocused ? (unitMode === 'newtons' ? "64" : "46") : (unitMode === 'newtons' ? "56" : "40")} 
                       height={isFocused ? "26" : "22"} 
                       fill="white" 
                       rx="4" 
@@ -504,15 +552,17 @@ const VectorDiagramSVG = ({
                       fontWeight={isFocused ? "bold" : "500"} 
                       fill={isFocused ? "#0f172a" : "#475569"}
                     >
-                      {formatNum(step.force || 0)}
+                      {unitMode === 'newtons' 
+                        ? `${formatNum(step.forceN)} N` 
+                        : formatNum(step.force || 0)}
                     </text>
                   </>
                 ) : displayMode === 'components' ? (
                   <>
                     <rect 
-                      x={valid((x1 + x2) / 2 - (isFocused ? 41 : 38))} 
+                      x={valid((x1 + x2) / 2 - (isFocused ? (unitMode === 'newtons' ? 48 : 41) : (unitMode === 'newtons' ? 44 : 38)))} 
                       y={valid((y1 + y2) / 2 - (isFocused ? 18 : 16))} 
-                      width={isFocused ? "82" : "76"} 
+                      width={isFocused ? (unitMode === 'newtons' ? "96" : "82") : (unitMode === 'newtons' ? "88" : "76")} 
                       height={isFocused ? "36" : "32"} 
                       fill="white" 
                       rx="5" 
@@ -529,7 +579,7 @@ const VectorDiagramSVG = ({
                       fontWeight="600" 
                       fill="#334155"
                     >
-                      H: {formatNum(step.h || 0)}
+                      H: {unitMode === 'newtons' ? `${formatNum(step.hN)} N` : formatNum(step.h || 0)}
                     </text>
                     <text 
                       x={valid((x1 + x2) / 2)} 
@@ -540,15 +590,15 @@ const VectorDiagramSVG = ({
                       fontWeight="600" 
                       fill="#334155"
                     >
-                      V: {formatNum(step.v || 0)}
+                      V: {unitMode === 'newtons' ? `${formatNum(step.vN)} N` : formatNum(step.v || 0)}
                     </text>
                   </>
                 ) : (
                   <>
                     <rect 
-                      x={valid((x1 + x2) / 2 - (isFocused ? 51 : 47))} 
+                      x={valid((x1 + x2) / 2 - (isFocused ? (unitMode === 'newtons' ? 62 : 51) : (unitMode === 'newtons' ? 56 : 47)))} 
                       y={valid((y1 + y2) / 2 - (isFocused ? 18 : 16))} 
-                      width={isFocused ? "102" : "94"} 
+                      width={isFocused ? (unitMode === 'newtons' ? "124" : "102") : (unitMode === 'newtons' ? "112" : "94")} 
                       height={isFocused ? "36" : "32"} 
                       fill="white" 
                       rx="5" 
@@ -564,7 +614,7 @@ const VectorDiagramSVG = ({
                       fontWeight="bold" 
                       fill={isFocused ? "#0f172a" : "#1e293b"}
                     >
-                      |F| = {formatNum(step.force || 0)}
+                      |F| = {unitMode === 'newtons' ? `${formatNum(step.forceN)} N` : formatNum(step.force || 0)}
                     </text>
                     <text 
                       x={valid((x1 + x2) / 2)} 
@@ -575,7 +625,7 @@ const VectorDiagramSVG = ({
                       fontWeight="500"
                       fill={isFocused ? "#334155" : "#64748b"}
                     >
-                      H:{formatNum(step.h || 0)}  V:{formatNum(step.v || 0)}
+                      H:{unitMode === 'newtons' ? `${formatNum(step.hN)}N` : formatNum(step.h || 0)}  V:{unitMode === 'newtons' ? `${formatNum(step.vN)}N` : formatNum(step.v || 0)}
                     </text>
                   </>
                 )}
@@ -1129,6 +1179,15 @@ function AppContent() {
   const [showSensitivityAnalysis, setShowSensitivityAnalysis] = useState(false);
   const [enableCentrifugal, setEnableCentrifugal] = useState(false);
   const [rpm, setRpm] = useState<string>('');
+  const [barChartSort, setBarChartSort] = useState<'id' | 'desc' | 'asc'>('id');
+
+  const handleCycleChartSort = () => {
+    setBarChartSort((prev) => {
+      if (prev === 'id') return 'desc';
+      if (prev === 'desc') return 'asc';
+      return 'id';
+    });
+  };
 
   // CSV File Upload & Status State
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -1173,6 +1232,7 @@ function AppContent() {
   const [vecDisplayMode, setVecDisplayMode] = useState<VectorDisplayMode>('both');
   const [vecShowProjections, setVecShowProjections] = useState(true);
   const [vecAutoCycle, setVecAutoCycle] = useState(false);
+  const [vecUnitMode, setVecUnitMode] = useState<'standard' | 'newtons'>('standard');
 
   // Auto-cycle vector display mode
   React.useEffect(() => {
@@ -1487,6 +1547,25 @@ function AppContent() {
   }, [masses, balRadius, angleTolerance, rpm, enableCentrifugal]);
 
   const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#f59e0b', '#10b981', '#06b6d4'];
+  
+  const sortedBarChartData = useMemo(() => {
+    const mapped = calculations.steps.map((step) => ({
+      id: step.id,
+      name: `Mass ${step.id}`,
+      force: Number((step.force || 0).toFixed(4)),
+      formattedForce: formatNum(step.force || 0),
+      rawForce: step.force || 0,
+      color: step.color,
+    }));
+
+    if (barChartSort === 'desc') {
+      return [...mapped].sort((a, b) => b.rawForce - a.rawForce);
+    }
+    if (barChartSort === 'asc') {
+      return [...mapped].sort((a, b) => a.rawForce - b.rawForce);
+    }
+    return mapped;
+  }, [calculations.steps, barChartSort]);
 
   const updateMass = (id: number, field: keyof Mass, value: string) => {
     setMasses(masses.map(m => m.id === id ? { ...m, [field]: value } : m));
@@ -2643,6 +2722,41 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                   <h2 className="text-lg font-semibold">Unbalance Force Contributions</h2>
                 </div>
                 <div className="flex items-center flex-wrap gap-2">
+                  {/* Sort cycle toggle button */}
+                  <button
+                    type="button"
+                    onClick={handleCycleChartSort}
+                    title={
+                      barChartSort === 'id'
+                        ? 'Current Sort: Mass ID (Natural) — Click to sort by Magnitude (Highest first)'
+                        : barChartSort === 'desc'
+                        ? 'Current Sort: Magnitude (Highest first) — Click to sort by Magnitude (Lowest first)'
+                        : 'Current Sort: Magnitude (Lowest first) — Click to sort by Mass ID (Natural)'
+                    }
+                    aria-label="Toggle unbalance contributions sort order"
+                    className={`px-2.5 py-1 text-xs font-medium rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                      barChartSort !== 'id'
+                        ? 'bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100/70 shadow-xs'
+                        : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                    }`}
+                  >
+                    {barChartSort === 'desc' ? (
+                      <ArrowDownWideNarrow size={13} className="text-blue-600" />
+                    ) : barChartSort === 'asc' ? (
+                      <ArrowUpNarrowWide size={13} className="text-blue-600" />
+                    ) : (
+                      <ArrowUpDown size={13} className="text-slate-500" />
+                    )}
+                    <span>
+                      Sort:{' '}
+                      {barChartSort === 'desc'
+                        ? 'Mag ↓'
+                        : barChartSort === 'asc'
+                        ? 'Mag ↑'
+                        : 'ID'}
+                    </span>
+                  </button>
+
                   {lockedMassId !== null && (
                     <div className="flex items-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-800 text-xs px-2.5 py-1 rounded-full shadow-xs animate-in fade-in duration-200">
                       <Pin size={12} className="text-blue-600 fill-blue-600" />
@@ -2686,13 +2800,7 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                 <div className="h-[280px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart
-                      data={calculations.steps.map((step) => ({
-                        id: step.id,
-                        name: `Mass ${step.id}`,
-                        force: Number((step.force || 0).toFixed(4)),
-                        formattedForce: formatNum(step.force || 0),
-                        rawForce: step.force || 0,
-                      }))}
+                      data={sortedBarChartData}
                       margin={{ top: 10, right: 10, left: -20, bottom: 5 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
@@ -2742,24 +2850,25 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                         animationEasing="ease-out"
                         animationBegin={0}
                       >
-                        {calculations.steps.map((step, index) => {
-                          const baseColor = (step.color || colors[index % colors.length]);
-                          const isFocused = activeFocusId === step.id;
-                          const isLocked = lockedMassId === step.id;
+                        {sortedBarChartData.map((item, index) => {
+                          const step = calculations.steps.find((s) => s.id === item.id);
+                          const baseColor = item.color || (step?.color || colors[index % colors.length]);
+                          const isFocused = activeFocusId === item.id;
+                          const isLocked = lockedMassId === item.id;
                           const isAnyFocused = activeFocusId !== null;
                           const opacity = isAnyFocused ? (isFocused ? 1 : 0.28) : 1;
 
                           return (
                             <Cell 
-                              key={`cell-${step.id}`} 
+                              key={`cell-${item.id}`} 
                               fill={baseColor}
                               fillOpacity={opacity}
                               stroke={isLocked ? '#1d4ed8' : isFocused ? baseColor : 'none'}
                               strokeWidth={isLocked ? 3 : isFocused ? 2 : 0}
                               strokeDasharray={isLocked ? '4,2' : undefined}
                               className="cursor-pointer transition-all duration-300 ease-out"
-                              onClick={() => handleMassClick(step.id)}
-                              onMouseEnter={() => handleMassHover(step.id)}
+                              onClick={() => handleMassClick(item.id)}
+                              onMouseEnter={() => handleMassHover(item.id)}
                               onMouseLeave={() => handleMassHover(null)}
                             />
                           );
@@ -2849,6 +2958,26 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                         </button>
                       </div>
                     )}
+
+                    {/* Force Unit Mode Toggle Button (N vs Mass·Radius) */}
+                    <button
+                      type="button"
+                      onClick={() => setVecUnitMode(prev => prev === 'standard' ? 'newtons' : 'standard')}
+                      title={
+                        vecUnitMode === 'newtons'
+                          ? 'Displaying Centrifugal Force in N (Newtons) — Click to switch to standard unbalance units (mass·radius)'
+                          : 'Displaying Unbalance Force in standard units (mass·radius) — Click to switch to Centrifugal Force in N (Newtons)'
+                      }
+                      aria-label="Toggle force unit mode between standard mass radius and Newtons"
+                      className={`px-2.5 py-1 text-xs font-semibold rounded-lg border flex items-center gap-1.5 transition-all cursor-pointer ${
+                        vecUnitMode === 'newtons'
+                          ? 'bg-amber-50 border-amber-300 text-amber-800 shadow-xs'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      <Gauge size={13} className={vecUnitMode === 'newtons' ? 'text-amber-600' : 'text-slate-500'} />
+                      <span>{vecUnitMode === 'newtons' ? 'Unit: N' : `Unit: ${massUnit}·${lengthUnit}`}</span>
+                    </button>
 
                     {/* Vector Display Mode Segmented Control */}
                     <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs shadow-xs">
@@ -2947,6 +3076,10 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                     isSimulating={isSimulating}
                     sensitivityPoints={calculations.sensitivityPoints}
                     showSensitivityAnalysis={showSensitivityAnalysis}
+                    unitMode={vecUnitMode}
+                    massUnit={massUnit}
+                    lengthUnit={lengthUnit}
+                    rpm={rpm}
                   />
                 </div>
               </div>
@@ -3098,6 +3231,10 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                       isSimulating={isSimulating}
                       sensitivityPoints={calculations.sensitivityPoints}
                       showSensitivityAnalysis={showSensitivityAnalysis}
+                      unitMode={vecUnitMode}
+                      massUnit={massUnit}
+                      lengthUnit={lengthUnit}
+                      rpm={rpm}
                     />
                   ) : (
                     <SpaceDiagramSVG 
@@ -3171,6 +3308,27 @@ Mounting Angle: ${formatNum(calculations.balancingAngleDeg)}°`;
                       </button>
                     </div>
                   </div>
+
+                  {/* Force Unit Representation Control (Only for vector diagram) */}
+                  {activePreviewModal === 'vector' && (
+                    <div className="mb-4 p-4 bg-white rounded-xl border border-slate-100 shadow-sm space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-semibold text-slate-500 uppercase">Force Unit</span>
+                        <button
+                          type="button"
+                          onClick={() => setVecUnitMode(prev => prev === 'standard' ? 'newtons' : 'standard')}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                            vecUnitMode === 'newtons'
+                              ? 'bg-amber-50 border-amber-300 text-amber-800 shadow-xs'
+                              : 'bg-slate-100 border-slate-200 text-slate-700 hover:bg-slate-200'
+                          }`}
+                        >
+                          <Gauge size={12} className={vecUnitMode === 'newtons' ? 'text-amber-600' : 'text-slate-500'} />
+                          <span>{vecUnitMode === 'newtons' ? 'Newtons (N)' : `${massUnit}·${lengthUnit}`}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Vector Value Display Options (Only for vector diagram) */}
                   {activePreviewModal === 'vector' && (
